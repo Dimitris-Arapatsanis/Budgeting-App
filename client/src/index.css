@@ -1,0 +1,150 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "@fontsource-variable/manrope";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 1rem;
+  --background: oklch(0.975 0.004 275);
+  --foreground: oklch(0.2 0.02 275);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2 0.02 275);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2 0.02 275);
+  --primary: oklch(0.51 0.22 277);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.955 0.012 275);
+  --secondary-foreground: oklch(0.3 0.06 277);
+  --muted: oklch(0.955 0.008 275);
+  --muted-foreground: oklch(0.54 0.02 275);
+  --accent: oklch(0.95 0.025 277);
+  --accent-foreground: oklch(0.38 0.15 277);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.925 0.008 275);
+  --input: oklch(0.91 0.01 275);
+  --ring: oklch(0.51 0.22 277);
+
+  /* Θετικό / αρνητικό / προειδοποίηση */
+  --positive: oklch(0.6 0.15 155);
+  --negative: oklch(0.6 0.21 25);
+  --warning: oklch(0.68 0.16 70);
+
+  /* Κατηγορική παλέτα των κύκλων, ελεγμένη για αχρωματοψία (dataviz validator).
+     Σταθερή σειρά. Η 8η (γκρι) χρησιμοποιείται μόνο για «Λοιπά». */
+  --chart-1: #6250d6;
+  --chart-2: #1baf7a;
+  --chart-3: #eb6834;
+  --chart-4: #2a78d6;
+  --chart-5: #e87ba4;
+  --chart-6: #eda100;
+  --chart-7: #008300;
+  --chart-8: oklch(0.8 0.008 275);
+
+  /* Χρώματα κατηγοριών (ο χρήστης διαλέγει όνομα, βλ. CATEGORY_COLORS) */
+  --cat-indigo: #6250d6;
+  --cat-violet: #9b4fd1;
+  --cat-pink: #e0679a;
+  --cat-red: #e34948;
+  --cat-orange: #eb6834;
+  --cat-amber: #e09a00;
+  --cat-brown: #a0703c;
+  --cat-green: #2f9a2f;
+  --cat-emerald: #1baf7a;
+  --cat-teal: #1598a8;
+  --cat-blue: #2a78d6;
+  --cat-slate: #737891;
+}
+
+.dark {
+  --background: oklch(0.155 0.012 275);
+  --foreground: oklch(0.96 0.005 275);
+  --card: oklch(0.205 0.016 275);
+  --card-foreground: oklch(0.96 0.005 275);
+  --popover: oklch(0.235 0.018 275);
+  --popover-foreground: oklch(0.96 0.005 275);
+  --primary: oklch(0.68 0.17 277);
+  --primary-foreground: oklch(0.17 0.03 277);
+  --secondary: oklch(0.27 0.02 275);
+  --secondary-foreground: oklch(0.96 0.005 275);
+  --muted: oklch(0.26 0.016 275);
+  --muted-foreground: oklch(0.7 0.02 275);
+  --accent: oklch(0.3 0.05 277);
+  --accent-foreground: oklch(0.88 0.06 277);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.68 0.17 277);
+
+  --positive: oklch(0.74 0.15 155);
+  --negative: oklch(0.7 0.17 25);
+  --warning: oklch(0.8 0.14 75);
+
+  --chart-1: #9085e9;
+  --chart-2: #199e70;
+  --chart-3: #d95926;
+  --chart-4: #3987e5;
+  --chart-5: #d55181;
+  --chart-6: #c98500;
+  --chart-7: #008300;
+  --chart-8: oklch(0.42 0.012 275);
+
+  --cat-indigo: #9085e9;
+  --cat-violet: #b57ee6;
+  --cat-pink: #e2709e;
+  --cat-red: #e66767;
+  --cat-orange: #e2703f;
+  --cat-amber: #d6a020;
+  --cat-brown: #b98a55;
+  --cat-green: #4caf50;
+  --cat-emerald: #22b07f;
+  --cat-teal: #26acbb;
+  --cat-blue: #4a90e8;
+  --cat-slate: #9097ad;
+}
+
+@theme inline {
+  --font-sans: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
+  --shadow-soft: 0 1px 2px oklch(0.2 0.02 275 / 4%), 0 6px 20px -6px oklch(0.2 0.02 275 / 10%);
+  --radius-sm: calc(var(--radius) - 8px);
+  --radius-md: calc(var(--radius) - 6px);
+  --radius-lg: calc(var(--radius) - 2px);
+  --radius-xl: var(--radius);
+  --radius-2xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-positive: var(--positive);
+  --color-negative: var(--negative);
+  --color-warning: var(--warning);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    font-feature-settings: "tnum";
+  }
+}
+
+/* Επιφάνεια κάρτας: χωρίς περίγραμμα στο φωτεινό θέμα, λεπτό περίγραμμα στο σκοτεινό */
+@utility surface {
+  @apply rounded-2xl border border-transparent bg-card text-card-foreground shadow-soft dark:border-border dark:shadow-none;
+}
