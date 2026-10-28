@@ -32,3 +32,27 @@ export function parseAmount(input: string): number | null {
 export function centsToInput(cents: number): string {
   return (cents / 100).toFixed(2).replace('.', ',');
 }
+
+/** Διαβάζει δεκαδικό αριθμό (π.χ. ποσότητα μετοχών) σε ελληνική ή αγγλική μορφή: "0,1234" ή "0.1234". */
+export function parseDecimal(input: string): number | null {
+  const s = input.trim().replace(/\s/g, '').replace(',', '.');
+  if (!/^\d+(\.\d+)?$/.test(s)) return null;
+  return Number(s);
+}
+
+const quantityFormatter = new Intl.NumberFormat('el-GR', { maximumFractionDigits: 6 });
+
+/** 1.234567891 → "1,234568" */
+export function formatQuantity(q: number): string {
+  return quantityFormatter.format(q);
+}
+
+/** Τιμή στο νόμισμα της μετοχής, π.χ. "527,20 $" */
+export function formatPrice(price: number, currency: string): string {
+  return new Intl.NumberFormat('el-GR', { style: 'currency', currency, maximumFractionDigits: 2 }).format(price);
+}
+
+export function formatPercent(fraction: number, signed = false): string {
+  const s = new Intl.NumberFormat('el-GR', { style: 'percent', maximumFractionDigits: 1 }).format(fraction);
+  return signed && fraction > 0 ? `+${s}` : s;
+}

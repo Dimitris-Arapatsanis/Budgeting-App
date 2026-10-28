@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import type { AccountType, CategoryColor, CategoryIcon, CategoryKind } from '@budget/shared';
 import * as schema from './schema.ts';
@@ -6,6 +7,7 @@ import * as schema from './schema.ts';
 const DEFAULT_ACCOUNTS: Array<{ name: string; type: AccountType }> = [
   { name: 'Τράπεζα Πειραιώς', type: 'bank' },
   { name: 'Alpha Bank', type: 'savings' },
+  { name: 'Μετρητά', type: 'cash' },
   { name: 'Revolut', type: 'broker' },
   { name: 'Trading 212', type: 'broker' },
 ];
@@ -35,6 +37,20 @@ export const DEFAULT_CATEGORIES: Record<CategoryKind, CategorySeed[]> = {
   ],
 };
 
+// Μετοχές/ETF και η σύνθεση του pie στο Trading 212 (ποσοστά-στόχοι, όχι ποσά)
+const DEFAULT_INSTRUMENTS: Array<{ ticker: string; name: string; currency: string; piePercent?: number }> = [
+  { ticker: 'VUSA.AS', name: 'Vanguard S&P 500 (VUSA)', currency: 'EUR' },
+  { ticker: 'MSFT', name: 'Microsoft', currency: 'USD', piePercent: 15 },
+  { ticker: 'NVDA', name: 'NVIDIA', currency: 'USD', piePercent: 15 },
+  { ticker: 'AMZN', name: 'Amazon', currency: 'USD', piePercent: 14 },
+  { ticker: 'AAPL', name: 'Apple', currency: 'USD', piePercent: 14 },
+  { ticker: 'GOOGL', name: 'Alphabet (Class A)', currency: 'USD', piePercent: 12 },
+  { ticker: 'AMD', name: 'AMD', currency: 'USD', piePercent: 10 },
+  { ticker: 'INTC', name: 'Intel', currency: 'USD', piePercent: 8 },
+  { ticker: 'META', name: 'Meta', currency: 'USD', piePercent: 7 },
+  { ticker: 'TSLA', name: 'Tesla', currency: 'USD', piePercent: 5 },
+];
+
 /** Γεμίζει λογαριασμούς και κατηγορίες μόνο αν οι πίνακες είναι άδειοι (πρώτο τρέξιμο). */
 export function seed(db: BetterSQLite3Database<typeof schema>) {
   if (!db.select().from(schema.accounts).limit(1).get()) {
@@ -46,5 +62,16 @@ export function seed(db: BetterSQLite3Database<typeof schema>) {
     const rows = Object.entries(DEFAULT_CATEGORIES).flatMap(([kind, items]) =>
       items.map(([name, icon, color]) => ({ name, kind: kind as CategoryKind, icon, color })));
     db.insert(schema.categories).values(rows).run();
+  }
+  if (!db.select().from(schema.instruments).limit(1).get()) {
+    const rows = db.insert(schema.instruments)
+      .values(DEFAULT_INSTRUMENTS.map(({ ticker, name, currency }) => ({ ticker, name, currency })))
+      .returning().all();
+    const t212 = db.select().from(schema.accounts).where(eq(schema.accounts.name, 'Trading 212')).get();
+    if (t212 && !db.select().from(schema.pies).limit(1).get()) {
+      const pie = db.insert(schema.pies).values({ name: 'Pie', accountId: t212.id }).returning().get();
+      db.insert(schema.pieSlices).values(DEFAULT_INSTRUMENTS.flatMap((d, i) =>
+        d.piePercent ? [{ pieId: pie.id, instrumentId: rows[i]!.id, targetPercent: d.piePercent }] : [])).run();
+    }
   }
 }

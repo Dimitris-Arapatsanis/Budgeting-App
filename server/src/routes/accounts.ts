@@ -4,22 +4,31 @@ import {
   accountInputSchema,
   computeBalances,
   idParamSchema,
+  isDebtAccount,
   reconcileInputSchema,
   type AccountWithBalance,
 } from '@budget/shared';
 import type { Db } from '../db/index.ts';
-import { accounts, transactions } from '../db/schema.ts';
+import { accounts, trades, transactions } from '../db/schema.ts';
 import { HttpError, notFound } from '../http-error.ts';
+import { listTrades } from './investments.ts';
 
 export function listAccounts(db: Db): AccountWithBalance[] {
   const rows = db.select().from(accounts).orderBy(accounts.sortOrder, accounts.id).all();
-  const balances = computeBalances(rows, db.select().from(transactions).all());
+  const balances = computeBalances(rows, db.select().from(transactions).all(), undefined, listTrades(db));
   return rows.map(a => ({ ...a, balance: balances.get(a.id) ?? a.initialBalance }));
 }
 
 function getAccount(db: Db, id: number): AccountWithBalance {
   const account = listAccounts(db).find(a => a.id === id);
   if (!account) throw notFound('Ο λογαριασμός');
+  return account;
+}
+
+/** Λογαριασμός που αλλάζει ο χρήστης: όχι οι λογαριασμοί συστήματος των χρωστούμενων. */
+function getUserAccount(db: Db, id: number): AccountWithBalance {
+  const account = getAccount(db, id);
+  if (isDebtAccount(account)) throw new HttpError(400, 'Ο λογαριασμός αλλάζει μόνο από τα χρωστούμενα');
   return account;
 }
 
@@ -37,6 +46,7 @@ export function accountRoutes(app: FastifyInstance, db: Db) {
   app.put('/api/accounts/:id', req => {
     const { id } = idParamSchema.parse(req.params);
     const input = accountInputSchema.parse(req.body);
+    getUserAccount(db, id);
     const row = db.update(accounts).set(input).where(eq(accounts.id, id)).returning().get();
     if (!row) throw notFound('Ο λογαριασμός');
     return getAccount(db, id);
@@ -46,7 +56,8 @@ export function accountRoutes(app: FastifyInstance, db: Db) {
     const { id } = idParamSchema.parse(req.params);
     const used = db.select({ id: transactions.id }).from(transactions)
       .where(or(eq(transactions.accountId, id), eq(transactions.toAccountId, id))).limit(1).get();
-    if (used) throw new HttpError(409, 'Ο λογαριασμός έχει συναλλαγές. Μπορείς να τον αρχειοθετήσεις.');
+    const traded = db.select({ id: trades.id }).from(trades).where(eq(trades.accountId, id)).limit(1).get();
+    if (used || traded) throw new HttpError(409, 'Ο λογαριασμός έχει συναλλαγές. Μπορείς να τον αρχειοθετήσεις.');
     const row = db.delete(accounts).where(eq(accounts.id, id)).returning().get();
     if (!row) throw notFound('Ο λογαριασμός');
     return reply.code(204).send();
@@ -56,8 +67,8 @@ export function accountRoutes(app: FastifyInstance, db: Db) {
   app.post('/api/accounts/:id/reconcile', req => {
     const { id } = idParamSchema.parse(req.params);
     const { actualBalance, date } = reconcileInputSchema.parse(req.body);
-    const account = getAccount(db, id);
-    const balanceAtDate = computeBalances([account], db.select().from(transactions).all(), date).get(id) ?? 0;
+    const account = getUserAccount(db, id);
+    const balanceAtDate = computeBalances([account], db.select().from(transactions).all(), date, listTrades(db)).get(id) ?? 0;
     const diff = actualBalance - balanceAtDate;
     if (diff !== 0) {
       db.insert(transactions)

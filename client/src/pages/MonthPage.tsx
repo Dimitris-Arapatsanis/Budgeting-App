@@ -3,6 +3,8 @@ import {
   ArrowDownLeft,
   ArrowLeftRight,
   ArrowUpRight,
+  ChartLine,
+  HandCoins,
   PiggyBank,
   Plus,
   Scale,
@@ -21,6 +23,7 @@ import {
   MONTH_KEY_RE,
   shiftMonth,
   today,
+  type AccountWithBalance,
   type Category,
   type MonthSummary,
   type Transaction,
@@ -34,7 +37,15 @@ import { StatCard } from '@/components/StatCard';
 import { TransactionDialog } from '@/components/TransactionDialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useAccounts, useCategories, useDeleteTransaction, useSummary, useTransactions } from '@/lib/api';
+import {
+  useAccounts,
+  useCategories,
+  useDeleteTransaction,
+  useInvestmentMonth,
+  useSummary,
+  useTrades,
+  useTransactions,
+} from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 const dayFormatter = new Intl.DateTimeFormat('el-GR', { weekday: 'long', day: 'numeric', month: 'long' });
@@ -74,6 +85,7 @@ function MonthView({ month }: { month: string }) {
 
       {summary && <MonthStats summary={summary} />}
       {summary && <StatusMessage summary={summary} />}
+      {summary && <InvestmentStrip month={month} summary={summary} />}
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
@@ -143,6 +155,33 @@ function MonthStats({ summary: s }: { summary: MonthSummary }) {
   );
 }
 
+/** Αποταμίευση σε μετοχές / σε μετρητά και μεταβολή αξίας μετοχών. Εμφανίζεται μόνο αν υπάρχουν κινήσεις μετοχών. */
+function InvestmentStrip({ month, summary: s }: { month: string; summary: MonthSummary }) {
+  const { data: trades = [] } = useTrades();
+  const hasTrades = trades.some(t => t.date <= lastDayOfMonth(month));
+  const { data: inv } = useInvestmentMonth(month, hasTrades);
+  if (!hasTrades) return null;
+  return (
+    <div className="surface grid grid-cols-3 divide-x px-1 py-3 text-sm sm:py-4">
+      <div className="px-3 sm:px-5">
+        <div className="text-xs text-muted-foreground">Σε μετοχές</div>
+        <Amount cents={s.invested} className="font-semibold" />
+      </div>
+      <div className="px-3 sm:px-5">
+        <div className="text-xs text-muted-foreground">Σε μετρητά</div>
+        <Amount cents={s.savedCash} signed className="font-semibold" />
+      </div>
+      <div className="px-3 sm:px-5" title="Άνοδος ή πτώση της αγοράς, χωρίς τις αγορές του μήνα">
+        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+          <ChartLine className="hidden size-3.5 sm:block" /> Αξία μετοχών
+        </div>
+        {inv ? <Amount cents={inv.marketChange} signed colored className="font-semibold" /> : <span className="text-muted-foreground">…</span>}
+        {inv?.incomplete && <span className="ml-1 text-xs text-muted-foreground" title="Λείπει κάποια τιμή">*</span>}
+      </div>
+    </div>
+  );
+}
+
 function StatusMessage({ summary: s }: { summary: MonthSummary }) {
   if (s.income === 0 && s.expenses === 0) return null;
   if (s.status === 'overspent') {
@@ -177,6 +216,7 @@ function TransactionList({
   const { data: accounts = [] } = useAccounts();
   const remove = useDeleteTransaction();
   const accountName = (id: number | null) => accounts.find(a => a.id === id)?.name ?? '—';
+  const debtInfo = (t: Transaction) => debtTransfer(t, accounts);
 
   const byDay = useMemo(() => {
     const groups = new Map<string, Transaction[]>();
@@ -194,25 +234,29 @@ function TransactionList({
               <li key={t.id} className="group flex items-center transition-colors hover:bg-muted/60">
                 <button
                   type="button"
-                  onClick={() => t.type !== 'adjustment' && onSelect(t)}
+                  onClick={() => t.type !== 'adjustment' && t.debtId == null && onSelect(t)}
+                  title={t.debtId != null ? 'Αλλάζει από τα Χρωστούμενα, στους Λογαριασμούς' : undefined}
                   className={cn(
                     'flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 text-left outline-none',
-                    t.type === 'adjustment' && 'cursor-default',
+                    (t.type === 'adjustment' || t.debtId != null) && 'cursor-default',
+                    t.debtId != null && 'pr-4',
                   )}
                 >
-                  <TransactionIcon transaction={t} category={category(t.categoryId)} />
+                  <TransactionIcon transaction={t} category={category(t.categoryId)} debt={!!debtInfo(t)} />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">
-                      {t.type === 'transfer' ? 'Μεταφορά' : t.type === 'adjustment' ? 'Διόρθωση υπολοίπου' : category(t.categoryId)?.name ?? '—'}
+                      {debtInfo(t)?.label ?? (t.type === 'transfer' ? 'Μεταφορά' : t.type === 'adjustment' ? 'Διόρθωση υπολοίπου' : category(t.categoryId)?.name ?? '—')}
                       {t.description && t.type !== 'adjustment' && <span className="font-normal text-muted-foreground"> · {t.description}</span>}
                     </div>
                     <div className="truncate text-xs text-muted-foreground">
-                      {t.type === 'transfer' ? `${accountName(t.accountId)} → ${accountName(t.toAccountId)}` : accountName(t.accountId)}
+                      {debtInfo(t)
+                        ? accountName(debtInfo(t)!.accountId)
+                        : t.type === 'transfer' ? `${accountName(t.accountId)} → ${accountName(t.toAccountId)}` : accountName(t.accountId)}
                     </div>
                   </div>
                   <TransactionAmount transaction={t} />
                 </button>
-                <Button
+                {t.debtId == null && <Button
                   variant="ghost"
                   size="icon-sm"
                   title="Διαγραφή"
@@ -221,7 +265,7 @@ function TransactionList({
                   className="mx-2 rounded-full text-muted-foreground hover:bg-negative/10 hover:text-negative focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
                 >
                   <Trash2 className="size-4" />
-                </Button>
+                </Button>}
               </li>
             ))}
           </ul>
@@ -237,7 +281,30 @@ const TX_ICON = {
   adjustment: { icon: Scale, className: 'bg-muted text-muted-foreground' },
 } as const;
 
-function TransactionIcon({ transaction: t, category }: { transaction: Transaction; category?: Category }) {
+/**
+ * Μεταφορά χρωστούμενου (από/προς «Μου χρωστάνε» ή «Χρωστάω»): τι έγινε και ποιος λογαριασμός του χρήστη άλλαξε.
+ * Το «χαρίστηκε» είναι κανονικό έξοδο/έσοδο και φαίνεται με την κατηγορία του.
+ */
+function debtTransfer(t: Transaction, accounts: AccountWithBalance[]) {
+  if (t.debtId == null || t.type !== 'transfer') return null;
+  const typeOf = (id: number | null) => accounts.find(a => a.id === id)?.type;
+  const from = typeOf(t.accountId);
+  const to = typeOf(t.toAccountId);
+  if (to === 'receivable') return { label: 'Δάνεισα', accountId: t.accountId };
+  if (from === 'receivable') return { label: 'Μου επέστρεψε', accountId: t.toAccountId };
+  if (from === 'payable') return { label: 'Δανείστηκα', accountId: t.toAccountId };
+  if (to === 'payable') return { label: 'Επέστρεψα', accountId: t.accountId };
+  return null;
+}
+
+function TransactionIcon({ transaction: t, category, debt }: { transaction: Transaction; category?: Category; debt?: boolean }) {
+  if (debt) {
+    return (
+      <span className="grid size-9 shrink-0 place-items-center rounded-full bg-warning/15 text-warning">
+        <HandCoins className="size-4" />
+      </span>
+    );
+  }
   if (t.type === 'income' || t.type === 'expense') {
     return <CategoryBadge icon={category?.icon ?? 'tag'} color={category?.color ?? 'slate'} />;
   }

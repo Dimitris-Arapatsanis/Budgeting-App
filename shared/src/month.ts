@@ -40,3 +40,9 @@ export function formatMonth(month: string): string {
   const [y, m] = month.split('-').map(Number) as [number, number];
   return `${MONTH_NAMES[m - 1]} ${y}`;
 }
+
+/** "2026-10-28" + 3 → "2026-10-31" */
+export function addDays(date: string, days: number): string {
+  const [y, m, d] = date.split('-').map(Number) as [number, number, number];
+  return toIsoDate(new Date(y, m - 1, d + days));
+}

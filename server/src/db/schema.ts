@@ -1,11 +1,11 @@
 import { sql } from 'drizzle-orm';
-import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
-import { ACCOUNT_TYPES, CATEGORY_COLORS, CATEGORY_ICONS, CATEGORY_KINDS, TRANSACTION_TYPES } from '@budget/shared';
+import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { ALL_ACCOUNT_TYPES, CATEGORY_COLORS, CATEGORY_ICONS, CATEGORY_KINDS, DEBT_DIRECTIONS, TRADE_SIDES, TRANSACTION_TYPES } from '@budget/shared';
 
 export const accounts = sqliteTable('accounts', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  type: text('type', { enum: ACCOUNT_TYPES }).notNull(),
+  type: text('type', { enum: ALL_ACCOUNT_TYPES }).notNull(),
   initialBalance: integer('initial_balance').notNull().default(0),
   archived: integer('archived', { mode: 'boolean' }).notNull().default(false),
   sortOrder: integer('sort_order').notNull().default(0),
@@ -23,6 +23,16 @@ export const categories = sqliteTable(
   t => [uniqueIndex('categories_kind_name_unique').on(t.kind, t.name)],
 );
 
+/** Χρωστούμενα. Τα ποσά τους είναι συναλλαγές με `debtId` (βλ. `buildDebt`). */
+export const debts = sqliteTable('debts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  direction: text('direction', { enum: DEBT_DIRECTIONS }).notNull(),
+  person: text('person').notNull(),
+  reason: text('reason').notNull().default(''),
+  date: text('date').notNull(),
+  createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
 export const transactions = sqliteTable(
   'transactions',
   {
@@ -34,7 +44,70 @@ export const transactions = sqliteTable(
     toAccountId: integer('to_account_id').references(() => accounts.id),
     categoryId: integer('category_id').references(() => categories.id),
     description: text('description').notNull().default(''),
+    debtId: integer('debt_id').references(() => debts.id, { onDelete: 'cascade' }),
     createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   t => [index('transactions_date_idx').on(t.date)],
+);
+
+export const instruments = sqliteTable('instruments', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ticker: text('ticker').notNull().unique(),
+  name: text('name').notNull(),
+  currency: text('currency').notNull(),
+});
+
+export const pies = sqliteTable('pies', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  accountId: integer('account_id').notNull().references(() => accounts.id),
+});
+
+export const pieSlices = sqliteTable(
+  'pie_slices',
+  {
+    pieId: integer('pie_id').notNull().references(() => pies.id, { onDelete: 'cascade' }),
+    instrumentId: integer('instrument_id').notNull().references(() => instruments.id),
+    targetPercent: real('target_percent').notNull(),
+  },
+  t => [primaryKey({ columns: [t.pieId, t.instrumentId] })],
+);
+
+export const trades = sqliteTable(
+  'trades',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    date: text('date').notNull(),
+    accountId: integer('account_id').notNull().references(() => accounts.id),
+    instrumentId: integer('instrument_id').notNull().references(() => instruments.id),
+    side: text('side', { enum: TRADE_SIDES }).notNull(),
+    quantity: real('quantity').notNull(),
+    amountEur: integer('amount_eur').notNull(),
+    pieId: integer('pie_id').references(() => pies.id, { onDelete: 'set null' }),
+    createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  t => [index('trades_date_idx').on(t.date)],
+);
+
+/** Τιμές κλεισίματος (και η τελευταία γνωστή τιμή της ημέρας) στο νόμισμα της μετοχής. */
+export const priceCache = sqliteTable(
+  'price_cache',
+  {
+    instrumentId: integer('instrument_id').notNull().references(() => instruments.id, { onDelete: 'cascade' }),
+    date: text('date').notNull(),
+    close: real('close').notNull(),
+    currency: text('currency').notNull(),
+  },
+  t => [primaryKey({ columns: [t.instrumentId, t.date] })],
+);
+
+/** Ισοτιμίες: `rate` = μονάδες νομίσματος ανά 1 EUR (pair π.χ. "EURUSD"). */
+export const fxCache = sqliteTable(
+  'fx_cache',
+  {
+    pair: text('pair').notNull(),
+    date: text('date').notNull(),
+    rate: real('rate').notNull(),
+  },
+  t => [primaryKey({ columns: [t.pair, t.date] })],
 );

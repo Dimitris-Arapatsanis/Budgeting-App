@@ -3,8 +3,17 @@ import { ISO_DATE_RE, MONTH_KEY_RE } from './month.ts';
 
 // ---------- Λογαριασμοί ----------
 
+/** Τύποι που φτιάχνει ο χρήστης */
 export const ACCOUNT_TYPES = ['bank', 'savings', 'cash', 'broker', 'loan'] as const;
-export type AccountType = (typeof ACCOUNT_TYPES)[number];
+/**
+ * Λογαριασμοί συστήματος για τα χρωστούμενα: ένας ανά τύπο, φτιάχνονται αυτόματα με το πρώτο χρέος.
+ * Δεν φαίνονται στις λίστες λογαριασμών και τα υπόλοιπά τους αλλάζουν μόνο μέσα από τα χρωστούμενα.
+ */
+export const DEBT_ACCOUNT_TYPES = ['receivable', 'payable'] as const;
+export const ALL_ACCOUNT_TYPES = [...ACCOUNT_TYPES, ...DEBT_ACCOUNT_TYPES] as const;
+export type AccountType = (typeof ALL_ACCOUNT_TYPES)[number];
+export type UserAccountType = (typeof ACCOUNT_TYPES)[number];
+export const isDebtAccount = (a: { type: AccountType }) => a.type === 'receivable' || a.type === 'payable';
 
 export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
   bank: 'Τράπεζα',
@@ -12,6 +21,8 @@ export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
   cash: 'Μετρητά',
   broker: 'Broker',
   loan: 'Δάνειο',
+  receivable: 'Μου χρωστάνε',
+  payable: 'Χρωστάω',
 };
 
 export const accountInputSchema = z.object({
@@ -115,6 +126,215 @@ export interface Transaction {
   toAccountId: number | null;
   categoryId: number | null;
   description: string;
+  /** Αν η συναλλαγή ανήκει σε χρωστούμενο (δανεισμός, επιστροφή, «χαρίστηκε») */
+  debtId?: number | null;
+}
+
+// ---------- Επενδύσεις ----------
+
+export interface Instrument {
+  id: number;
+  /** Yahoo symbol, π.χ. "VUSA.AS", "MSFT" */
+  ticker: string;
+  name: string;
+  /** Νόμισμα της τιμής (κανονικοποιημένο, π.χ. GBp → GBP) */
+  currency: string;
+}
+
+export const instrumentInputSchema = z.object({
+  ticker: z.string().trim().min(1, 'Το σύμβολο είναι υποχρεωτικό').max(20).transform(s => s.toUpperCase()),
+});
+
+export const searchQuerySchema = z.object({ q: z.string().trim().min(1).max(60) });
+
+export interface InstrumentSearchResult {
+  ticker: string;
+  name: string;
+  exchange: string;
+  type: string;
+}
+
+/** `opening` = αρχική θέση: μετοχές που είχες ήδη. Μετράει στο portfolio, όχι στα μετρητά ή στις αγορές του μήνα. */
+export const TRADE_SIDES = ['buy', 'sell', 'opening'] as const;
+export type TradeSide = (typeof TRADE_SIDES)[number];
+
+export const TRADE_SIDE_LABELS: Record<TradeSide, string> = {
+  buy: 'Αγορά',
+  sell: 'Πώληση',
+  opening: 'Αρχική θέση',
+};
+
+export const tradeInputSchema = z.object({
+  date: z.string().regex(ISO_DATE_RE, 'Μη έγκυρη ημερομηνία'),
+  accountId: id,
+  instrumentId: id,
+  side: z.enum(TRADE_SIDES),
+  quantity: z.number().positive('Η ποσότητα πρέπει να είναι θετική'),
+  /** Συνολικό ποσό σε EUR (cents), μαζί με τυχόν χρεώσεις */
+  amountEur: positiveAmount,
+  pieId: id.nullable().default(null),
+});
+export type TradeInput = z.input<typeof tradeInputSchema>;
+export type ParsedTradeInput = z.output<typeof tradeInputSchema>;
+
+export const tradeBatchSchema = z.object({ trades: z.array(tradeInputSchema).min(1).max(50) });
+
+export interface Trade {
+  id: number;
+  date: string;
+  accountId: number;
+  instrumentId: number;
+  side: TradeSide;
+  quantity: number;
+  amountEur: number;
+  pieId: number | null;
+}
+
+export const pieInputSchema = z.object({
+  name: z.string().trim().min(1, 'Το όνομα είναι υποχρεωτικό').max(40),
+  accountId: id,
+  slices: z
+    .array(z.object({ instrumentId: id, targetPercent: z.number().positive().max(100) }))
+    .min(1, 'Το pie χρειάζεται τουλάχιστον μία μετοχή')
+    .refine(s => Math.abs(s.reduce((sum, x) => sum + x.targetPercent, 0) - 100) < 0.01, 'Τα ποσοστά πρέπει να κάνουν 100%')
+    .refine(s => new Set(s.map(x => x.instrumentId)).size === s.length, 'Κάθε μετοχή μπαίνει μία φορά'),
+});
+export type PieInput = z.input<typeof pieInputSchema>;
+
+export interface PieSlice {
+  instrumentId: number;
+  targetPercent: number;
+}
+
+export interface Pie {
+  id: number;
+  name: string;
+  accountId: number;
+  slices: PieSlice[];
+}
+
+export const piePreviewSchema = z.object({
+  amountEur: positiveAmount,
+  date: z.string().regex(ISO_DATE_RE, 'Μη έγκυρη ημερομηνία'),
+});
+export type PiePreviewInput = z.infer<typeof piePreviewSchema>;
+
+/** Τιμή μιας μετοχής σε μια ημερομηνία, στο νόμισμά της και σε EUR. */
+export interface PricePoint {
+  price: number;
+  currency: string;
+  /** Μονάδες νομίσματος ανά 1 EUR (1 για EUR) */
+  fxRate: number;
+  priceEur: number;
+  /** Ημερομηνία της τιμής (μπορεί να είναι παλιότερη, π.χ. Σαββατοκύριακο) */
+  date: string;
+}
+
+export interface PiePreviewLine {
+  instrumentId: number;
+  targetPercent: number;
+  amountEur: number;
+  /** null αν δεν βρέθηκε τιμή: ο χρήστης γράφει την ποσότητα μόνος του */
+  price: PricePoint | null;
+  quantity: number | null;
+}
+
+export interface Position {
+  accountId: number;
+  instrumentId: number;
+  quantity: number;
+  /** Κόστος κτήσης σε EUR (cents), μέση τιμή */
+  costEur: number;
+  price: PricePoint | null;
+  /** cents, null αν δεν υπάρχει τιμή */
+  valueEur: number | null;
+  /** Μεταβολή της ημέρας σε cents */
+  dayChangeEur: number;
+}
+
+export interface PieDrift {
+  pieId: number;
+  valueEur: number;
+  slices: Array<{ instrumentId: number; targetPercent: number; valueEur: number; actualPercent: number }>;
+}
+
+export interface Portfolio {
+  positions: Position[];
+  valueEur: number;
+  costEur: number;
+  dayChangeEur: number;
+  /** Αν κάποια τιμή δεν είναι τρέχουσα (το Yahoo δεν απάντησε) */
+  stale: boolean;
+  pies: PieDrift[];
+}
+
+/** Επενδύσεις ενός μήνα: ροές (αγορές/πωλήσεις) και μεταβολή αξίας λόγω αγοράς. */
+export interface InvestmentMonth {
+  month: string;
+  bought: number;
+  sold: number;
+  opened: number;
+  valueStart: number;
+  valueEnd: number;
+  /** valueEnd − valueStart − (αγορές − πωλήσεις + αξία αρχικών θέσεων την ημέρα που μπήκαν) */
+  marketChange: number;
+  /** Αν λείπει κάποια τιμή (τότε το marketChange δεν είναι ακριβές) */
+  incomplete: boolean;
+}
+
+// ---------- Χρωστούμενα ----------
+
+/** `lent` = δάνεισα (μου χρωστάνε), `borrowed` = δανείστηκα (χρωστάω) */
+export const DEBT_DIRECTIONS = ['lent', 'borrowed'] as const;
+export type DebtDirection = (typeof DEBT_DIRECTIONS)[number];
+
+export const debtInputSchema = z.object({
+  direction: z.enum(DEBT_DIRECTIONS),
+  person: z.string().trim().min(1, 'Γράψε σε ποιον / από ποιον').max(60),
+  reason: z.string().trim().max(200).default(''),
+  date: z.string().regex(ISO_DATE_RE, 'Μη έγκυρη ημερομηνία'),
+  amount: positiveAmount,
+  /** Από πού βγήκαν (δάνεισα) ή πού μπήκαν (δανείστηκα) τα λεφτά */
+  accountId: id,
+});
+export type DebtInput = z.input<typeof debtInputSchema>;
+
+export const debtPaymentSchema = z.object({
+  date: z.string().regex(ISO_DATE_RE, 'Μη έγκυρη ημερομηνία'),
+  amount: positiveAmount,
+  /** Πού μπήκαν (μου επέστρεψαν) ή από πού βγήκαν (επέστρεψα) τα λεφτά */
+  accountId: id,
+});
+export type DebtPaymentInput = z.infer<typeof debtPaymentSchema>;
+
+/** Χαρίστηκε: το υπόλοιπο γίνεται έξοδο (δάνεισα) ή έσοδο (δανείστηκα) στην κατηγορία. */
+export const debtForgiveSchema = z.object({
+  date: z.string().regex(ISO_DATE_RE, 'Μη έγκυρη ημερομηνία'),
+  categoryId: id,
+});
+export type DebtForgiveInput = z.infer<typeof debtForgiveSchema>;
+
+export interface DebtPayment {
+  transactionId: number;
+  date: string;
+  amount: number;
+  /** null για «χαρίστηκε» */
+  accountId: number | null;
+  kind: 'payment' | 'forgiven';
+}
+
+export interface Debt {
+  id: number;
+  direction: DebtDirection;
+  person: string;
+  reason: string;
+  date: string;
+  amount: number;
+  accountId: number;
+  /** Όσα επιστράφηκαν ή χαρίστηκαν */
+  settled: number;
+  outstanding: number;
+  payments: DebtPayment[];
 }
 
 export const monthQuerySchema = z.object({

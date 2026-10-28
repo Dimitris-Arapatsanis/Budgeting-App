@@ -15,6 +15,27 @@
       "when": 1793192164750,
       "tag": "0001_category_style",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793206495720,
+      "tag": "0002_investments",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1793209280486,
+      "tag": "0003_cash_account",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1793210080250,
+      "tag": "0004_debts",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,4 @@
-import type { Account, Transaction } from './schemas.ts';
+import type { Account, Trade, Transaction } from './schemas.ts';
 
 /** Πώς επηρεάζει μια συναλλαγή τα υπόλοιπα: λίστα [accountId, μεταβολή σε cents]. */
 export function transactionEffects(t: Transaction): Array<[number, number]> {
@@ -14,18 +14,27 @@ export function transactionEffects(t: Transaction): Array<[number, number]> {
   }
 }
 
-/** Υπόλοιπα λογαριασμών, λαμβάνοντας υπόψη συναλλαγές μέχρι και την ημερομηνία `until` (αν δοθεί). */
+/** Πώς επηρεάζει μια αγορά/πώληση τα μετρητά του broker. Η αρχική θέση δεν τα επηρεάζει. */
+export function tradeCashEffect(t: Pick<Trade, 'side' | 'amountEur'>): number {
+  return t.side === 'buy' ? -t.amountEur : t.side === 'sell' ? t.amountEur : 0;
+}
+
+/** Υπόλοιπα λογαριασμών, λαμβάνοντας υπόψη συναλλαγές και trades μέχρι και την ημερομηνία `until` (αν δοθεί). */
 export function computeBalances(
   accounts: Pick<Account, 'id' | 'initialBalance'>[],
   transactions: Transaction[],
   until?: string,
+  trades: Trade[] = [],
 ): Map<number, number> {
   const balances = new Map(accounts.map(a => [a.id, a.initialBalance]));
+  const add = (accountId: number, delta: number) => balances.set(accountId, (balances.get(accountId) ?? 0) + delta);
   for (const t of transactions) {
     if (until && t.date > until) continue;
-    for (const [accountId, delta] of transactionEffects(t)) {
-      balances.set(accountId, (balances.get(accountId) ?? 0) + delta);
-    }
+    for (const [accountId, delta] of transactionEffects(t)) add(accountId, delta);
+  }
+  for (const t of trades) {
+    if (until && t.date > until) continue;
+    add(t.accountId, tradeCashEffect(t));
   }
   return balances;
 }
@@ -102,6 +111,10 @@ export interface MonthSummary {
   allocation: SavingsAllocation;
   /** καθαρά χρήματα που πήγαν σε broker λογαριασμούς */
   toBrokers: number;
+  /** σε μετοχές: αγορές − πωλήσεις του μήνα (χωρίς αρχικές θέσεις) */
+  invested: number;
+  /** σε μετρητά: αποταμίευση − invested. Αρνητικό = πήρες από τα μαζεμένα για να επενδύσεις ή να ξοδέψεις */
+  savedCash: number;
 }
 
 function totalsByCategory(transactions: Transaction[]): CategoryTotal[] {
@@ -119,6 +132,7 @@ function totalsByCategory(transactions: Transaction[]): CategoryTotal[] {
 export function computeMonthSummary(
   transactions: Transaction[],
   accounts: Pick<Account, 'id' | 'type'>[],
+  trades: Trade[] = [],
 ): MonthSummary {
   const savingsAccounts = new Set(accounts.filter(a => a.type === 'savings').map(a => a.id));
   const incomeTxs = transactions.filter(t => t.type === 'income');
@@ -142,6 +156,8 @@ export function computeMonthSummary(
   const allocation = computeSavingsAllocation(transactions, accounts);
   const brokerIds = new Set(accounts.filter(a => a.type === 'broker').map(a => a.id));
   const toBrokers = allocation.accounts.filter(a => brokerIds.has(a.accountId)).reduce((acc, a) => acc + a.amount, 0);
+
+  const invested = trades.reduce((acc, t) => acc - tradeCashEffect(t), 0);
 
   let status: MonthStatus = 'ok';
   let fromSavings = 0;
@@ -167,6 +183,8 @@ export function computeMonthSummary(
     incomeByCategory: totalsByCategory(incomeTxs),
     allocation,
     toBrokers,
+    invested,
+    savedCash: savings - invested,
   };
 }
 
@@ -191,17 +209,19 @@ export function computeYearSummary(
   year: number,
   transactions: Transaction[],
   accounts: Pick<Account, 'id' | 'type'>[],
+  trades: Trade[] = [],
 ): YearSummary {
   const months: YearMonth[] = Array.from({ length: 12 }, (_, i) => {
     const month = `${year}-${String(i + 1).padStart(2, '0')}`;
     const monthTxs = transactions.filter(t => t.date.startsWith(month));
-    return { month, hasData: monthTxs.length > 0, summary: computeMonthSummary(monthTxs, accounts) };
+    const monthTrades = trades.filter(t => t.date.startsWith(month));
+    return { month, hasData: monthTxs.length > 0, summary: computeMonthSummary(monthTxs, accounts, monthTrades) };
   });
   const active = months.filter(m => m.summary.income > 0 || m.summary.expenses > 0);
   return {
     year,
     months,
-    total: computeMonthSummary(transactions, accounts),
+    total: computeMonthSummary(transactions, accounts, trades),
     positiveMonths: active.filter(m => m.summary.savings >= 0).length,
     negativeMonths: active.filter(m => m.summary.savings < 0).length,
   };

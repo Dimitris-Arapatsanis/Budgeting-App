@@ -28,15 +28,16 @@ shared/   Κοινοί TypeScript τύποι και validation schemas (zod) γ�
 
 | Πίνακας | Περιγραφή |
 |---|---|
-| `accounts` | Λογαριασμοί: `name`, `type` (`bank` / `savings` / `cash` / `broker` / `loan`), `initialBalance`, `archived` |
+| `accounts` | Λογαριασμοί: `name`, `type` (`bank` / `savings` / `cash` / `broker` / `loan`, και συστήματος `receivable` / `payable`), `initialBalance`, `archived` |
+| `debts` | Χρωστούμενα: `direction` (`lent` / `borrowed`), `person`, `reason`, `date`. Τα ποσά είναι συναλλαγές με `debtId` |
 | `categories` | Κατηγορίες: `name`, `kind` (`income` / `expense`), `icon` (κλειδί από `CATEGORY_ICONS`), `color` (όνομα από `CATEGORY_COLORS`) |
-| `transactions` | `date`, `type` (`income` / `expense` / `transfer` / `adjustment`), `amount`, `accountId`, `toAccountId` (μόνο για transfer), `categoryId`, `description` |
+| `transactions` | `date`, `type` (`income` / `expense` / `transfer` / `adjustment`), `amount`, `accountId`, `toAccountId` (μόνο για transfer), `categoryId`, `description`, `debtId` (nullable) |
 | `instruments` | Μετοχές/ETF: `ticker` (Yahoo symbol), `name`, `currency` |
-| `trades` | Αγορές/πωλήσεις: `date`, `accountId` (broker/πλατφόρμα), `instrumentId`, `side` (`buy` / `sell`), `quantity`, `amountEur`, `pieId` (nullable) |
+| `trades` | Αγορές/πωλήσεις: `date`, `accountId` (broker/πλατφόρμα), `instrumentId`, `side` (`buy` / `sell` / `opening`), `quantity`, `amountEur`, `pieId` (nullable) |
 | `pies` | `name`, `accountId` |
 | `pie_slices` | `pieId`, `instrumentId`, `targetPercent` (το άθροισμα ανά pie = 100) |
-| `price_cache` | `instrumentId`, `date`, `close`, `currency` |
-| `fx_cache` | `date`, `pair` (π.χ. `EURUSD`), `rate` |
+| `price_cache` | `instrumentId`, `date`, `close`, `currency` (κλεισίματα + η τελευταία τιμή της ημέρας) |
+| `fx_cache` | `date`, `pair` (π.χ. `EURUSD`), `rate` (μονάδες νομίσματος ανά 1 EUR) |
 
 ## Λογαριασμοί του χρήστη
 
@@ -46,8 +47,9 @@ shared/   Κοινοί TypeScript τύποι και validation schemas (zod) γ�
 |---|---|---|
 | Τράπεζα Πειραιώς | `bank` | Μπαίνει ο μισθός, από εδώ φεύγουν τα έξοδα |
 | Alpha Bank | `savings` | Τα μαζεμένα («στην άκρη») |
+| Μετρητά | `cash` | Μετρητά στο πορτοφόλι. Ανάληψη από ΑΤΜ = μεταφορά Πειραιώς → Μετρητά. Μπήκε με το migration `0003` σε βάσεις που δεν είχαν λογαριασμό `cash` |
 | Revolut | `broker` | ETF **VUSA** (Vanguard S&P 500 UCITS). Χρησιμοποιούμε το EUR listing στο Yahoo (`VUSA.AS`), **όχι** το `VUSA.L`, που είναι σε GBP |
-| Trading 212 | `broker` | Pie με ποσοστά ανά μετοχή. Η σύνθεσή του θα οριστεί στη Φάση 2 |
+| Trading 212 | `broker` | Pie: Microsoft 15%, NVIDIA 15%, Amazon 14%, Apple 14%, Alphabet A 12%, AMD 10%, Intel 8%, Meta 7%, Tesla 5% (seed, αλλάζει από την εφαρμογή) |
 
 ## Κανόνες domain
 
@@ -55,8 +57,14 @@ shared/   Κοινοί TypeScript τύποι και validation schemas (zod) γ�
 - **Ποσά χρημάτων:** αποθηκεύονται ως **ακέραια cents** (`integer`), ποτέ ως float. Οι ποσότητες μετοχών είναι δεκαδικές (fractional shares).
 - **Υπόλοιπο λογαριασμού** = `initialBalance` + έσοδα − έξοδα ± μεταφορές ± adjustments − αγορές + πωλήσεις (για broker λογαριασμούς).
 - **Μεταφορές** δεν μετράνε ως έσοδο ή έξοδο στα στατιστικά.
+- **Χρωστούμενα** (`/api/debts`, `buildDebt` στο `shared/src/debts.ts`): δύο λογαριασμοί συστήματος, «Μου χρωστάνε» (`receivable`) και «Χρωστάω» (`payable`), που φτιάχνονται με το πρώτο χρέος. Δάνεισα = μεταφορά λογαριασμός → receivable, επιστροφή = μεταφορά πίσω (μερική επιτρέπεται). Δανείστηκα = μεταφορά payable → λογαριασμός, επιστροφή = λογαριασμός → payable. «Χαρίστηκε» = έξοδο από receivable / έσοδο στο payable για το υπόλοιπο, στην κατηγορία που διαλέγει ο χρήστης. Η 1η μεταφορά (`opening`) δίνει ποσό και λογαριασμό. Έτσι υπόλοιπα, «Πού πήγε η αποταμίευση» (κομμάτι «Μου χρωστάνε») και net worth βγαίνουν χωρίς ειδική λογική.
+  - Οι λογαριασμοί συστήματος **δεν** φαίνονται σε λίστες/selects (`isDebtAccount`) και δεν δέχονται συναλλαγές, διορθώσεις ή αλλαγές από τα κανονικά endpoints (400). Οι συναλλαγές με `debtId` δεν αλλάζουν/σβήνονται από το `/api/transactions` (409). Στον Μήνα φαίνονται με ετικέτα (Δάνεισα / Μου επέστρεψε / Δανείστηκα / Επέστρεψα), χωρίς κάδο.
+  - Το migration `0004` πρόσθεσε το `debt_id` με `ALTER`, χωρίς cascade: η διαγραφή χρωστούμενου σβήνει ρητά τις συναλλαγές του.
 - **Adjustment** = διόρθωση υπολοίπου, για να ταιριάξει με την πραγματικότητα. Δεν μετράει ως έσοδο ή έξοδο.
-- **«Πόσα μπήκαν σε μετοχές»** σε έναν μήνα = άθροισμα `amountEur` των `buy` trades του μήνα.
+- **«Πόσα μπήκαν σε μετοχές»** σε έναν μήνα (`invested`) = `buy` − `sell` του μήνα. Τα `opening` δεν μετράνε.
+- **Αρχική θέση (`opening`):** μετοχές που ο χρήστης είχε ήδη (ποσότητα + συνολικό κόστος). Μετράνε στο portfolio και στο κόστος κτήσης, **όχι** στα μετρητά του broker ούτε στις αγορές του μήνα. Τα μετρητά του broker είναι το `initialBalance` του. Ο χρήστης κάνει μόνο αγορές προς το παρόν, η πώληση είναι απλή (χωρίς φόρους).
+- **Κόστος κτήσης:** μέση τιμή. Η πώληση αφαιρεί κόστος ανάλογα με την ποσότητα (`computeHoldings`).
+- **Μεταβολή αξίας μετοχών** μήνα = αξία τέλους − αξία αρχής − (αγορές − πωλήσεις + αξία αρχικών θέσεων **την ημέρα που μπήκαν**). Οι αρχικές θέσεις δεν πρέπει να φαίνονται ως κέρδος.
 - **Καθαρή περιουσία** σε μια ημερομηνία = άθροισμα υπολοίπων λογαριασμών (τα δάνεια αφαιρούνται) + αξία holdings (ποσότητα × τιμή κλεισίματος σε EUR). Για παλιούς μήνες χρησιμοποιείται η τιμή κλεισίματος της τελευταίας ημέρας συναλλαγών του μήνα.
 - **Μεταβολή net worth του μήνα** = NW τέλους μήνα − NW τέλους προηγούμενου μήνα (θετική = πράσινο, αρνητική = κόκκινο).
 - **Μήνας συναλλαγής** = ο μήνας της ημερομηνίας της (ο μισθός πληρώνεται αρχή μήνα και μετράει στον ίδιο μήνα).
@@ -69,7 +77,7 @@ shared/   Κοινοί TypeScript τύποι και validation schemas (zod) γ�
   - `toBrokers` = καθαρά χρήματα προς `broker` λογαριασμούς (στήλη «Σε brokers»).
   - `Μεταβολή αξίας μετοχών` (άνοδος/πτώση αγοράς) εμφανίζεται ξεχωριστά.
   - `Μεταβολή net worth = αποταμίευση + μεταβολή αξίας μετοχών` (± adjustments).
-  - Φάση 1: μόνο έσοδα/έξοδα/αποταμίευση/μετρητά. Οι γραμμές για τις μετοχές προστίθενται στις Φάσεις 2–3.
+  - Κάτω από τις κάρτες, αν υπάρχουν κινήσεις μετοχών: «Σε μετοχές» (`invested`), «Σε μετρητά» (`savedCash`), «Αξία μετοχών» (`GET /api/portfolio/month`). Το net worth έρχεται στη Φάση 3.
 - **Pie:** ο χρήστης δίνει χειροκίνητα ποσό και ημερομηνία. Η εφαρμογή το μοιράζει σε `buy` trades ανά slice με βάση το `targetPercent` και την τιμή της ημέρας. Ο χρήστης μπορεί να διορθώσει ποσότητες/ποσά πριν την αποθήκευση. **Δεν** γίνονται αυτόματες αγορές χωρίς ενέργεια του χρήστη.
 
 ## Design
@@ -78,7 +86,7 @@ shared/   Κοινοί TypeScript τύποι και validation schemas (zod) γ�
   - Για κάθε επιφάνεια-κάρτα χρησιμοποίησε το utility `surface` (ορίζεται στο `index.css`, το χρησιμοποιεί και το `Card`). Για σκιά, το `shadow-soft`.
   - **Accent: indigo** (`--primary`): κουμπιά, ενεργό tab, εικονίδια. Τα πράσινο/κόκκινο κρατιούνται μόνο για συν/μείον.
   - Γραμματοσειρά **Manrope** (`@fontsource-variable/manrope`, τοπικά, με ελληνικά).
-  - Μενού: πάνω μπάρα με «pill» tabs (επιλογή του χρήστη). Τίτλοι σελίδων: μικρό eyebrow + μεγάλος τίτλος (`PeriodNav` για Μήνα/Έτος).
+  - Μενού: στον υπολογιστή πάνω μπάρα με «pill» tabs, στο κινητό (< `sm`) μπάρα κάτω με εικονίδιο + ετικέτα (επιλογές του χρήστη). Τα toasts στο κινητό ανεβαίνουν πάνω από την κάτω μπάρα (`mobileOffset`). Τίτλοι σελίδων: μικρό eyebrow + μεγάλος τίτλος (`PeriodNav` για Μήνα/Έτος).
   - Βασικά νούμερα σε `StatCard` (εικονίδιο σε χρωματιστό κύκλο, ετικέτα, μεγάλο ποσό). Γραμμές λιστών με εικονίδιο σε κύκλο αριστερά.
 - **Donut charts («κύκλοι») για κατανομές.** Στο κέντρο του κύκλου φαίνεται το σύνολο και γύρω τα κομμάτια. Παραδείγματα:
   - Net worth: Τράπεζες/μετρητά, Μετοχές, Άλλα (τα χρέη φαίνονται ξεχωριστά)
@@ -108,9 +116,9 @@ shared/   Κοινοί TypeScript τύποι και validation schemas (zod) γ�
 | `npm run build` | Production build του client |
 | `npm run db:generate` | Νέο Drizzle migration μετά από αλλαγή στο `server/src/db/schema.ts` |
 
-Env vars του server: `PORT` (3001), `DB_FILE` (`server/data/budget.db`), `LOG_LEVEL` (`warn`).
+Env vars του server: `PORT` (3001), `DB_FILE` (`server/data/budget.db`), `LOG_LEVEL` (`warn`). Του client (Vite): `API_PORT` (3001), για proxy σε άλλο server.
 
-**Δοκιμές στο UI:** τρέχε με `DB_FILE=<scratchpad>/test.db npm run dev`, για να μη γεμίσει η πραγματική βάση του χρήστη με δοκιμαστικά δεδομένα.
+**Δοκιμές στο UI:** τρέχε με `DB_FILE=<scratchpad>/test.db npm run dev`, για να μη γεμίσει η πραγματική βάση του χρήστη με δοκιμαστικά δεδομένα. Αν οι θύρες είναι πιασμένες: `PORT=3011 DB_FILE=… npx tsx src/index.ts` στο `server/` και `API_PORT=3011 npx vite --port 5181` στο `client/`.
 
 ## Σημειώσεις υλοποίησης
 
@@ -123,14 +131,18 @@ Env vars του server: `PORT` (3001), `DB_FILE` (`server/data/budget.db`), `LOG
 - Το PWA (vite-plugin-pwa) μπαίνει στη Φάση 6.
 - Endpoints συνόψεων: `GET /api/summary?month=YYYY-MM` (`MonthSummary`) και `GET /api/year?year=YYYY` (`YearSummary`: 12 μήνες + σύνολο + μήνες συν/μείον). Όλοι οι υπολογισμοί γίνονται στο `shared/src/calc.ts`.
 - Κατηγορίες: εικονίδιο + χρώμα. Τα κλειδιά (`CATEGORY_ICONS`, `CATEGORY_COLORS`) ζουν στο `shared`. Η αντιστοίχιση σε lucide components και Tailwind classes γίνεται στο `client/src/lib/category-style.ts`, και οι αποχρώσεις light/dark στα `--cat-*` του `index.css`. Νέο εικονίδιο/χρώμα = προσθήκη και στα τρία. Ο κύκλος «Έξοδα ανά κατηγορία» χρησιμοποιεί το χρώμα της κατηγορίας (`DonutSlice.color`). Τα migrations μπορεί να περιέχουν και `UPDATE` δεδομένων (βλ. `0001_category_style.sql`), αλλά με τις ίδιες τιμές που έχει το seed.
+- Επιλογή λογαριασμού με εικονίδιο: `AccountSelect`. Στη φόρμα συναλλαγής ο λογαριασμός λέγεται «Πληρωμή με» (έξοδο) / «Σε λογαριασμό» (έσοδο), με εικονίδιο ανά τύπο (`client/src/lib/account-style.ts`).
 - Διαγραφή συναλλαγής: γίνεται χωρίς ερώτηση, με «Αναίρεση» στο toast, που ξαναδημιουργεί τη συναλλαγή με νέο id (`useDeleteTransaction`). Ο κάδος φαίνεται με hover στον υπολογιστή και πάντα στο κινητό.
 - Recharts: τα χρώματα δίνονται με Tailwind classes (`fill-(--chart-N)`, `fill-positive`), γιατί οι SVG attributes δεν δέχονται `var()`. Στα legends/λίστες **μη** χρησιμοποιείς όνομα ως React key, γιατί πριν φορτώσουν τα δεδομένα όλα τα ονόματα είναι «—».
-- Οθόνες: Μήνας (`/month/:month`), Έτος (`/year/:year`), Λογαριασμοί, Κατηγορίες. Στο κινητό (375px) τα 4 pill tabs χωράνε ακριβώς (το nav κάνει οριζόντιο scroll αν ξεχειλίσει). Με 5ο tab (Επενδύσεις, Φάση 2) θα χρειαστεί άλλη λύση, π.χ. bottom bar στο κινητό. Ρώτα πρώτα τον χρήστη.
+- Οθόνες: Μήνας (`/month/:month`), Έτος (`/year/:year`), Επενδύσεις, Λογαριασμοί, Κατηγορίες. Στα 640px τα 5 pills χωράνε οριακά. 6ο tab θέλει άλλη λύση (ρώτα τον χρήστη).
+- **Τιμές (Φάση 2):** `server/src/market/`. Το `MarketData` είναι η πηγή (`yahooMarketData` με `yahoo-finance2`, `fakeMarket` στα tests, χωρίς δίκτυο: `buildApp(db, { market })`). Το `Prices` κάνει cache: τρέχουσες τιμές στη μνήμη για 15 λεπτά, κάθε τιμή και κλείσιμο στη βάση. Αν το Yahoo δεν απαντάει, χρησιμοποιεί την τελευταία γνωστή τιμή (`Portfolio.stale`). Ιστορική τιμή = κλείσιμο της ημέρας ή έως 7 μέρες πριν. Ισοτιμία: `EUR{CUR}=X`, τιμή € = τιμή / rate. Λονδίνο σε πένες (`GBp`) → GBP / 100 (`normalizeCurrency`).
+- Endpoints επενδύσεων: `/api/instruments` (+ `/search?q=`), `/api/trades` (+ `/batch`, όλα ή κανένα), `/api/pies` (+ `/:id/preview`, δεν αποθηκεύει), `/api/portfolio`, `/api/portfolio/month?month=`. Οι κινήσεις μπαίνουν μόνο σε `broker` λογαριασμούς. Τα υπόλοιπα λογαριασμών περιλαμβάνουν τα trades (`computeBalances(..., trades)`), ενώ ο κύκλος «Πού πήγε η αποταμίευση» μόνο τις συναλλαγές.
+- Ποσότητες μετοχών: `real`, στρογγυλεμένες στα 8 δεκαδικά (`roundQuantity`). Μοίρασμα pie σε cents με μέθοδο μεγαλύτερου υπολοίπου (`splitPieAmount`), ώστε το άθροισμα να βγαίνει ακριβώς. Στην «Αγορά στο pie» ο χρήστης αλλάζει τα ποσοστά της συγκεκριμένης αγοράς (rebalance): το ποσό ξαναμοιράζεται αναλογικά στο client, οι γραμμές με 0% παραλείπονται, οι στόχοι του pie δεν αλλάζουν.
 
 ## Roadmap
 
 1. ✅ **Βάση**: monorepo setup, accounts, categories, transactions (CRUD), μηνιαία προβολή.
-2. **Επενδύσεις**: instruments, trades, pies, live τιμές + FX, αξία portfolio.
+2. ✅ **Επενδύσεις**: instruments, trades, pies, live τιμές + FX, αξία portfolio.
 3. **Net worth & dashboard**: μηνιαίο NW και μεταβολή, προσθήκη NW στο tab «Έτος» (που υπάρχει ήδη, με έσοδα/έξοδα/αποταμίευση).
 4. **Επαναλαμβανόμενες συναλλαγές.**
 5. **Import CSV** (τράπεζα, Revolut) με αντιστοίχιση σε κατηγορίες.

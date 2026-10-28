@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, Banknote, ChartLine, CreditCard, Landmark, Pencil, PiggyBank, Plus, Scale, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, Pencil, Plus, Scale, Trash2 } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
   ACCOUNT_TYPE_LABELS,
@@ -7,11 +7,14 @@ import {
   formatEurSigned,
   parseAmount,
   today,
+  isDebtAccount,
   type AccountType,
+  type UserAccountType,
   type AccountWithBalance,
 } from '@budget/shared';
 import { Amount } from '@/components/Amount';
 import { AmountInput } from '@/components/AmountInput';
+import { DebtsSection } from '@/components/DebtsSection';
 import { DonutChart } from '@/components/DonutChart';
 import { Field } from '@/components/Field';
 import { Button } from '@/components/ui/button';
@@ -19,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ACCOUNT_ICON } from '@/lib/account-style';
 import { useAccounts, useDeleteAccount, useReconcileAccount, useSaveAccount } from '@/lib/api';
 import { toast } from 'sonner';
 
@@ -34,15 +38,17 @@ export function AccountsPage() {
   const [dialog, setDialog] = useState<DialogState>({ kind: 'closed' });
   const close = () => setDialog({ kind: 'closed' });
 
-  const active = accounts.filter(a => !a.archived);
-  const archived = accounts.filter(a => a.archived);
+  // Οι λογαριασμοί των χρωστούμενων φαίνονται στην ενότητα «Χρωστούμενα»
+  const userAccounts = accounts.filter(a => !isDebtAccount(a));
+  const active = userAccounts.filter(a => !a.archived);
+  const archived = userAccounts.filter(a => a.archived);
   const assets = active.filter(a => a.type !== 'loan');
   const loans = active.filter(a => a.type === 'loan');
   const debt = loans.reduce((sum, a) => sum + a.balance, 0);
-  const allZero = accounts.length > 0 && accounts.every(a => a.balance === 0);
+  const allZero = userAccounts.length > 0 && userAccounts.every(a => a.balance === 0);
 
   const toggleArchive = (a: AccountWithBalance) =>
-    save.mutate({ id: a.id, input: { name: a.name, type: a.type, initialBalance: a.initialBalance, archived: !a.archived } });
+    save.mutate({ id: a.id, input: { name: a.name, type: a.type as UserAccountType, initialBalance: a.initialBalance, archived: !a.archived } });
 
   const handleDelete = (a: AccountWithBalance) => {
     if (confirm(`Διαγραφή του λογαριασμού «${a.name}»;`)) remove.mutate(a.id);
@@ -96,6 +102,8 @@ export function AccountsPage() {
           />
         ))}
       </ul>
+
+      <DebtsSection />
 
       {archived.length > 0 && (
         <section>
@@ -155,14 +163,6 @@ function AccountRow({
   );
 }
 
-const ACCOUNT_ICON: Record<AccountType, typeof Landmark> = {
-  bank: Landmark,
-  savings: PiggyBank,
-  cash: Banknote,
-  broker: ChartLine,
-  loan: CreditCard,
-};
-
 function AccountIcon({ type }: { type: AccountType }) {
   const Icon = ACCOUNT_ICON[type];
   return (
@@ -175,7 +175,7 @@ function AccountIcon({ type }: { type: AccountType }) {
 function AccountDialog({ open, account, onClose }: { open: boolean; account?: AccountWithBalance; onClose: () => void }) {
   const save = useSaveAccount();
   const [name, setName] = useState('');
-  const [type, setType] = useState<AccountType>('bank');
+  const [type, setType] = useState<UserAccountType>('bank');
   const [initial, setInitial] = useState('');
   const [error, setError] = useState<string | null>(null);
   const isLoan = type === 'loan';
@@ -183,7 +183,7 @@ function AccountDialog({ open, account, onClose }: { open: boolean; account?: Ac
   useEffect(() => {
     if (!open) return;
     setName(account?.name ?? '');
-    setType(account?.type ?? 'bank');
+    setType((account?.type as UserAccountType | undefined) ?? 'bank');
     // Τα δάνεια αποθηκεύονται αρνητικά, αλλά ο χρήστης γράφει την οφειλή θετική
     setInitial(account ? centsToInput(Math.abs(account.initialBalance)) : '');
     setError(null);
@@ -214,7 +214,7 @@ function AccountDialog({ open, account, onClose }: { open: boolean; account?: Ac
             <Input id="acc-name" required autoFocus value={name} onChange={e => setName(e.target.value)} />
           </Field>
           <Field label="Είδος">
-            <Select value={type} onValueChange={v => setType(v as AccountType)}>
+            <Select value={type} onValueChange={v => setType(v as UserAccountType)}>
               <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {ACCOUNT_TYPES.map(t => <SelectItem key={t} value={t}>{ACCOUNT_TYPE_LABELS[t]}</SelectItem>)}

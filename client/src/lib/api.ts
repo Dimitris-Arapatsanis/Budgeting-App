@@ -5,8 +5,22 @@ import type {
   AccountWithBalance,
   Category,
   CategoryInput,
+  Debt,
+  DebtForgiveInput,
+  DebtInput,
+  DebtPaymentInput,
+  Instrument,
+  InstrumentSearchResult,
+  InvestmentMonth,
   MonthSummary,
+  Pie,
+  PieInput,
+  PiePreviewInput,
+  PiePreviewLine,
+  Portfolio,
   ReconcileInput,
+  Trade,
+  TradeInput,
   Transaction,
   TransactionInput,
   YearSummary,
@@ -50,6 +64,44 @@ export const useYearSummary = (year: number) =>
     queryKey: ['year', year],
     queryFn: () => request<YearSummary>('GET', `/api/year?year=${year}`),
   });
+
+export const useInstruments = () =>
+  useQuery({ queryKey: ['instruments'], queryFn: () => request<Instrument[]>('GET', '/api/instruments') });
+
+export const useInstrumentSearch = (query: string) =>
+  useQuery({
+    queryKey: ['instrument-search', query],
+    queryFn: () => request<InstrumentSearchResult[]>('GET', `/api/instruments/search?q=${encodeURIComponent(query)}`),
+    enabled: query.trim().length >= 2,
+    staleTime: 5 * 60_000,
+  });
+
+export const useTrades = () => useQuery({ queryKey: ['trades'], queryFn: () => request<Trade[]>('GET', '/api/trades') });
+
+export const usePies = () => useQuery({ queryKey: ['pies'], queryFn: () => request<Pie[]>('GET', '/api/pies') });
+
+// Οι τιμές ανανεώνονται στον server κάθε 15 λεπτά
+export const usePortfolio = () =>
+  useQuery({
+    queryKey: ['portfolio'],
+    queryFn: () => request<Portfolio>('GET', '/api/portfolio'),
+    staleTime: 5 * 60_000,
+    refetchInterval: 15 * 60_000,
+  });
+
+export const useInvestmentMonth = (month: string, enabled = true) =>
+  useQuery({
+    queryKey: ['portfolio-month', month],
+    queryFn: () => request<InvestmentMonth>('GET', `/api/portfolio/month?month=${month}`),
+    staleTime: 5 * 60_000,
+    enabled,
+  });
+
+/** Πρόταση για αγορά στο pie (δεν αποθηκεύει). */
+export const piePreview = (pieId: number, input: PiePreviewInput) =>
+  request<PiePreviewLine[]>('POST', `/api/pies/${pieId}/preview`, input);
+
+export const useDebts = () => useQuery({ queryKey: ['debts'], queryFn: () => request<Debt[]>('GET', '/api/debts') });
 
 // ---------- Mutations ----------
 
@@ -110,3 +162,59 @@ export const useSaveCategory = () =>
 
 export const useDeleteCategory = () =>
   useApiMutation((id: number) => request('DELETE', `/api/categories/${id}`), 'Η κατηγορία διαγράφηκε');
+
+export const useAddInstrument = () =>
+  useApiMutation((ticker: string) => request<Instrument>('POST', '/api/instruments', { ticker }));
+
+export const useDeleteInstrument = () =>
+  useApiMutation((id: number) => request('DELETE', `/api/instruments/${id}`), 'Η μετοχή αφαιρέθηκε');
+
+export const useSaveTrade = () =>
+  useApiMutation(({ id, input }: { id?: number; input: TradeInput }) =>
+    id ? request('PUT', `/api/trades/${id}`, input) : request('POST', '/api/trades', input));
+
+export const useSaveTradeBatch = () =>
+  useApiMutation((trades: TradeInput[]) => request<Trade[]>('POST', '/api/trades/batch', { trades }));
+
+/** Όπως η διαγραφή συναλλαγής: χωρίς ερώτηση, με «Αναίρεση». Δέχεται πολλές κινήσεις (π.χ. όλη μια αγορά στο pie). */
+export function useDeleteTrades() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ts: Trade[]) => Promise.all(ts.map(t => request('DELETE', `/api/trades/${t.id}`))),
+    onSuccess: (_result, ts) => {
+      queryClient.invalidateQueries();
+      toast.success(ts.length > 1 ? `Διαγράφηκαν ${ts.length} κινήσεις` : 'Η κίνηση διαγράφηκε', {
+        action: {
+          label: 'Αναίρεση',
+          onClick: () => {
+            request('POST', '/api/trades/batch', { trades: ts })
+              .then(() => queryClient.invalidateQueries())
+              .catch((err: Error) => toast.error(err.message));
+          },
+        },
+      });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+}
+
+export const useSavePie = () =>
+  useApiMutation(({ id, input }: { id?: number; input: PieInput }) =>
+    id ? request('PUT', `/api/pies/${id}`, input) : request('POST', '/api/pies', input), 'Το pie αποθηκεύτηκε');
+
+export const useSaveDebt = () =>
+  useApiMutation(({ id, input }: { id?: number; input: DebtInput }) =>
+    id ? request<Debt>('PUT', `/api/debts/${id}`, input) : request<Debt>('POST', '/api/debts', input));
+
+export const useDeleteDebt = () =>
+  useApiMutation((id: number) => request('DELETE', `/api/debts/${id}`), 'Το χρωστούμενο διαγράφηκε');
+
+export const useDebtPayment = () =>
+  useApiMutation(({ id, input }: { id: number; input: DebtPaymentInput }) => request<Debt>('POST', `/api/debts/${id}/payments`, input));
+
+export const useForgiveDebt = () =>
+  useApiMutation(({ id, input }: { id: number; input: DebtForgiveInput }) => request<Debt>('POST', `/api/debts/${id}/forgive`, input));
+
+export const useDeleteDebtPayment = () =>
+  useApiMutation(({ id, transactionId }: { id: number; transactionId: number }) =>
+    request<Debt>('DELETE', `/api/debts/${id}/payments/${transactionId}`));

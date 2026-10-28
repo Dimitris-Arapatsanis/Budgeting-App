@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { AccountWithBalance, Category, MonthSummary, YearSummary } from '@budget/shared';
 import { buildApp } from './app.ts';
 import { openDb } from './db/index.ts';
+import { fakeMarket } from './market/fake-market.ts';
 
 let app: ReturnType<typeof buildApp>;
 
@@ -11,7 +12,7 @@ async function api<T = unknown>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', url: 
 }
 
 beforeEach(() => {
-  app = buildApp(openDb(':memory:'));
+  app = buildApp(openDb(':memory:'), { market: fakeMarket() });
 });
 
 async function fixtures() {
@@ -33,6 +34,7 @@ describe('seed', () => {
     expect(accounts.map(a => [a.name, a.type, a.balance])).toEqual([
       ['Τράπεζα Πειραιώς', 'bank', 0],
       ['Alpha Bank', 'savings', 0],
+      ['Μετρητά', 'cash', 0],
       ['Revolut', 'broker', 0],
       ['Trading 212', 'broker', 0],
     ]);
@@ -119,7 +121,7 @@ describe('accounts', () => {
   it('creates a loan account with a negative balance', async () => {
     const res = await api<AccountWithBalance>('POST', '/api/accounts', { name: 'Δάνειο αυτοκινήτου', type: 'loan', initialBalance: -500_000 });
     expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({ balance: -500_000, sortOrder: 4 });
+    expect(res.body).toMatchObject({ balance: -500_000, sortOrder: 5 });
   });
 });
 

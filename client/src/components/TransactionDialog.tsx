@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import {
   centsToInput,
+  isDebtAccount,
   parseAmount,
   today,
   type AccountWithBalance,
@@ -8,6 +9,7 @@ import {
   type Transaction,
   type TransactionInput,
 } from '@budget/shared';
+import { AccountSelect } from '@/components/AccountSelect';
 import { AmountInput } from '@/components/AmountInput';
 import { Field } from '@/components/Field';
 import { Button } from '@/components/ui/button';
@@ -41,7 +43,7 @@ function initialState(
   accounts: AccountWithBalance[],
   categories: Category[],
 ): FormState {
-  const active = accounts.filter(a => !a.archived);
+  const active = accounts.filter(a => !a.archived && !isDebtAccount(a));
   const mainAccount = active.find(a => a.type === 'bank') ?? active[0];
   const savingsAccount = active.find(a => a.type === 'savings' && a.id !== mainAccount?.id);
   const firstCategory = (kind: 'income' | 'expense') => String(categories.find(c => c.kind === kind)?.id ?? '');
@@ -103,7 +105,8 @@ export function TransactionDialog({ open, onOpenChange, transaction, defaultDate
     });
   };
 
-  const selectableAccounts = accounts.filter(a => !a.archived || String(a.id) === form.accountId || String(a.id) === form.toAccountId);
+  const selectableAccounts = accounts.filter(a =>
+    !isDebtAccount(a) && (!a.archived || String(a.id) === form.accountId || String(a.id) === form.toAccountId));
   const kindCategories = categories.filter(c => c.kind === (form.type === 'income' ? 'income' : 'expense'));
 
   function handleSubmit(e: FormEvent) {
@@ -177,7 +180,7 @@ export function TransactionDialog({ open, onOpenChange, transaction, defaultDate
                   </SelectContent>
                 </Select>
               </Field>
-              <Field label="Λογαριασμός">
+              <Field label={form.type === 'expense' ? 'Πληρωμή με' : 'Σε λογαριασμό'}>
                 <AccountSelect accounts={selectableAccounts} value={form.accountId} onChange={v => set('accountId', v)} />
               </Field>
             </div>
@@ -205,16 +208,5 @@ export function TransactionDialog({ open, onOpenChange, transaction, defaultDate
         </form>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function AccountSelect({ accounts, value, onChange }: { accounts: AccountWithBalance[]; value: string; onChange: (v: string) => void }) {
-  return (
-    <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className="w-full"><SelectValue placeholder="Επίλεξε" /></SelectTrigger>
-      <SelectContent>
-        {accounts.map(a => <SelectItem key={a.id} value={String(a.id)}>{a.name}</SelectItem>)}
-      </SelectContent>
-    </Select>
   );
 }

@@ -4,6 +4,7 @@ import {
   computeMonthSummary,
   computeYearSummary,
   idParamSchema,
+  isDebtAccount,
   monthQuerySchema,
   transactionInputSchema,
   yearQuerySchema,
@@ -13,6 +14,7 @@ import {
 import type { Db } from '../db/index.ts';
 import { accounts, categories, transactions } from '../db/schema.ts';
 import { HttpError, notFound } from '../http-error.ts';
+import { listTrades } from './investments.ts';
 
 /** Συναλλαγές μιας περιόδου: `period` = "YYYY-MM" (μήνας) ή "YYYY" (έτος). */
 function periodTransactions(db: Db, period: string): Transaction[] {
@@ -25,6 +27,7 @@ function periodTransactions(db: Db, period: string): Transaction[] {
     toAccountId: transactions.toAccountId,
     categoryId: transactions.categoryId,
     description: transactions.description,
+    debtId: transactions.debtId,
   })
     .from(transactions)
     .where(like(transactions.date, `${period}-%`))
@@ -34,7 +37,11 @@ function periodTransactions(db: Db, period: string): Transaction[] {
 
 /** Μετατρέπει το validated input σε γραμμή πίνακα, ελέγχοντας ότι λογαριασμοί/κατηγορία υπάρχουν. */
 function toRow(db: Db, input: ParsedTransactionInput) {
-  const accountExists = (id: number) => !!db.select({ id: accounts.id }).from(accounts).where(eq(accounts.id, id)).get();
+  // Οι λογαριασμοί των χρωστούμενων αλλάζουν μόνο από το /api/debts
+  const accountExists = (id: number) => {
+    const account = db.select().from(accounts).where(eq(accounts.id, id)).get();
+    return !!account && !isDebtAccount(account);
+  };
   if (!accountExists(input.accountId)) throw new HttpError(400, 'Ο λογαριασμός δεν υπάρχει');
 
   const row = {
@@ -59,6 +66,13 @@ function toRow(db: Db, input: ParsedTransactionInput) {
   return row;
 }
 
+/** Οι συναλλαγές των χρωστούμενων αλλάζουν μόνο από τα χρωστούμενα. */
+function checkNotDebt(db: Db, id: number) {
+  const row = db.select({ debtId: transactions.debtId }).from(transactions).where(eq(transactions.id, id)).get();
+  if (!row) throw notFound('Η συναλλαγή');
+  if (row.debtId != null) throw new HttpError(409, 'Η συναλλαγή ανήκει σε χρωστούμενο. Άλλαξέ την από τους Λογαριασμούς.');
+}
+
 export function transactionRoutes(app: FastifyInstance, db: Db) {
   app.get('/api/transactions', req => {
     const { month } = monthQuerySchema.parse(req.query);
@@ -73,6 +87,7 @@ export function transactionRoutes(app: FastifyInstance, db: Db) {
 
   app.put('/api/transactions/:id', req => {
     const { id } = idParamSchema.parse(req.params);
+    checkNotDebt(db, id);
     const row = toRow(db, transactionInputSchema.parse(req.body));
     const updated = db.update(transactions).set(row).where(eq(transactions.id, id)).returning().get();
     if (!updated) throw notFound('Η συναλλαγή');
@@ -81,6 +96,7 @@ export function transactionRoutes(app: FastifyInstance, db: Db) {
 
   app.delete('/api/transactions/:id', (req, reply) => {
     const { id } = idParamSchema.parse(req.params);
+    checkNotDebt(db, id);
     const row = db.delete(transactions).where(eq(transactions.id, id)).returning().get();
     if (!row) throw notFound('Η συναλλαγή');
     return reply.code(204).send();
@@ -88,11 +104,13 @@ export function transactionRoutes(app: FastifyInstance, db: Db) {
 
   app.get('/api/summary', req => {
     const { month } = monthQuerySchema.parse(req.query);
-    return computeMonthSummary(periodTransactions(db, month), db.select().from(accounts).all());
+    const monthTrades = listTrades(db).filter(t => t.date.startsWith(month));
+    return computeMonthSummary(periodTransactions(db, month), db.select().from(accounts).all(), monthTrades);
   });
 
   app.get('/api/year', req => {
     const { year } = yearQuerySchema.parse(req.query);
-    return computeYearSummary(year, periodTransactions(db, String(year)), db.select().from(accounts).all());
+    const yearTrades = listTrades(db).filter(t => t.date.startsWith(`${year}-`));
+    return computeYearSummary(year, periodTransactions(db, String(year)), db.select().from(accounts).all(), yearTrades);
   });
 }

@@ -6,6 +6,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { Layout } from '@/components/Layout';
 import { AccountsPage } from '@/pages/AccountsPage';
 import { CategoriesPage } from '@/pages/CategoriesPage';
+import { InvestmentsPage } from '@/pages/InvestmentsPage';
 import { MonthPage } from '@/pages/MonthPage';
 import { YearPage } from '@/pages/YearPage';
 import { ThemeProvider } from '@/lib/theme';
@@ -25,6 +26,7 @@ const router = createBrowserRouter([
       { path: 'month/:month', element: <MonthPage /> },
       { path: 'year', element: <Navigate to={`/year/${new Date().getFullYear()}`} replace /> },
       { path: 'year/:year', element: <YearPage /> },
+      { path: 'investments', element: <InvestmentsPage /> },
       { path: 'accounts', element: <AccountsPage /> },
       { path: 'categories', element: <CategoriesPage /> },
       { path: '*', element: <Navigate to="/" replace /> },
@@ -37,7 +39,8 @@ createRoot(document.getElementById('root')!).render(
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
         <RouterProvider router={router} />
-        <Toaster position="bottom-center" />
+        {/* Στο κινητό πάνω από την κάτω μπάρα */}
+        <Toaster position="bottom-center" mobileOffset={{ bottom: 'calc(76px + env(safe-area-inset-bottom))' }} />
       </QueryClientProvider>
     </ThemeProvider>
   </StrictMode>,
