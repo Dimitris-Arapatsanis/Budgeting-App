@@ -1,9 +1,10 @@
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, inArray } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import {
   computeHoldings,
   idParamSchema,
   instrumentInputSchema,
+  isDebtAccount,
   lastDayOfMonth,
   monthQuerySchema,
   normalizeCurrency,
@@ -27,10 +28,11 @@ import {
   type Trade,
 } from '@budget/shared';
 import type { Db } from '../db/index.ts';
-import { accounts, instruments, pieSlices, pies, trades } from '../db/schema.ts';
+import { accounts, instruments, pieSlices, pies, trades, transactions } from '../db/schema.ts';
 import { HttpError, notFound } from '../http-error.ts';
 import type { MarketData } from '../market/market-data.ts';
 import type { Prices } from '../market/prices.ts';
+import { openingsValue, valueAt } from '../market/valuation.ts';
 
 const TRADE_COLUMNS = {
   id: trades.id,
@@ -41,10 +43,77 @@ const TRADE_COLUMNS = {
   quantity: trades.quantity,
   amountEur: trades.amountEur,
   pieId: trades.pieId,
+  fundingAccountId: transactions.accountId,
+  fundingTransactionId: trades.fundingTransactionId,
+  batchId: trades.batchId,
 };
 
+const selectTrades = (db: Db) =>
+  db.select(TRADE_COLUMNS).from(trades).leftJoin(transactions, eq(trades.fundingTransactionId, transactions.id));
+
 export function listTrades(db: Db): Trade[] {
-  return db.select(TRADE_COLUMNS).from(trades).orderBy(desc(trades.date), desc(trades.id)).all();
+  return selectTrades(db).orderBy(desc(trades.date), desc(trades.id)).all();
+}
+
+function getTrade(db: Db, id: number): Trade {
+  const trade = selectTrades(db).where(eq(trades.id, id)).get();
+  if (!trade) throw notFound('Η κίνηση');
+  return trade;
+}
+
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
+
+/**
+ * Μεταφορές που χρηματοδοτούν αγορές («Χρήματα από»): μία ανά (λογαριασμό, broker, ημερομηνία),
+ * ώστε μια αγορά στο pie να γίνεται μία μεταφορά και όχι μία ανά μετοχή.
+ */
+function fundTrades(tx: Tx, items: Array<{ id: number; input: ParsedTradeInput }>) {
+  const groups = new Map<string, Array<{ id: number; input: ParsedTradeInput }>>();
+  for (const item of items) {
+    const { fundingAccountId, accountId, date } = item.input;
+    if (fundingAccountId == null) continue;
+    const key = `${fundingAccountId}:${accountId}:${date}`;
+    groups.set(key, [...(groups.get(key) ?? []), item]);
+  }
+  for (const group of groups.values()) {
+    const first = group[0]!.input;
+    const instrument = tx.select().from(instruments).where(eq(instruments.id, first.instrumentId)).get();
+    const transfer = tx.insert(transactions).values({
+      date: first.date,
+      type: 'transfer',
+      amount: group.reduce((sum, g) => sum + g.input.amountEur, 0),
+      accountId: first.fundingAccountId!,
+      toAccountId: first.accountId,
+      description: group.length > 1 ? 'Αγορά μετοχών' : `Αγορά ${instrument?.name ?? 'μετοχής'}`,
+    }).returning().get();
+    tx.update(trades).set({ fundingTransactionId: transfer.id }).where(inArray(trades.id, group.map(g => g.id))).run();
+  }
+}
+
+/** Αφαιρεί το μερίδιο μιας αγοράς από τη μεταφορά που τη χρηματοδότησε. Αν δεν μείνει τίποτα, τη σβήνει. */
+function releaseFunding(tx: Tx, fundingTransactionId: number | null, amountEur: number) {
+  if (fundingTransactionId == null) return;
+  const transfer = tx.select().from(transactions).where(eq(transactions.id, fundingTransactionId)).get();
+  if (!transfer) return;
+  if (transfer.amount > amountEur) {
+    tx.update(transactions).set({ amount: transfer.amount - amountEur }).where(eq(transactions.id, transfer.id)).run();
+  } else {
+    tx.delete(transactions).where(eq(transactions.id, transfer.id)).run();
+  }
+}
+
+function insertTrades(db: Db, inputs: ParsedTradeInput[]): Trade[] {
+  const ids = db.transaction(tx => {
+    const items = inputs.map(({ fundingAccountId: _, ...row }, i) => ({
+      id: tx.insert(trades).values(row).returning({ id: trades.id }).get().id,
+      input: inputs[i]!,
+    }));
+    // Μια αγορά με πολλές μετοχές (pie) = ένα batch, για να φαίνεται ως μία γραμμή
+    if (items.length > 1) tx.update(trades).set({ batchId: items[0]!.id }).where(inArray(trades.id, items.map(i => i.id))).run();
+    fundTrades(tx, items);
+    return items.map(item => item.id);
+  });
+  return ids.map(id => getTrade(db, id));
 }
 
 function listPies(db: Db): Pie[] {
@@ -76,49 +145,19 @@ function checkInstrument(db: Db, instrumentId: number) {
   }
 }
 
-function toTradeRow(db: Db, input: ParsedTradeInput) {
+function toTradeRow(db: Db, input: ParsedTradeInput): ParsedTradeInput {
   checkBroker(db, input.accountId);
   checkInstrument(db, input.instrumentId);
   if (input.pieId != null && !db.select().from(pies).where(eq(pies.id, input.pieId)).get()) {
     throw new HttpError(400, 'Το pie δεν υπάρχει');
   }
-  return input;
-}
-
-/** Αξία όλων των θέσεων σε μια ημερομηνία (cents), με τις τιμές κλεισίματος εκείνης της μέρας. */
-async function valueAt(db: Db, prices: Prices, allTrades: Trade[], date: string) {
-  const holdings = computeHoldings(allTrades, date);
-  if (holdings.length === 0) return { value: 0, incomplete: false };
-  const byId = new Map(db.select().from(instruments).all().map(i => [i.id, i]));
-  const points = await Promise.all(holdings.map(h => prices.priceOn(byId.get(h.instrumentId)!, date)));
-  let value = 0;
-  let incomplete = false;
-  holdings.forEach((h, i) => {
-    const p = points[i];
-    if (p) value += valueCents(h.quantity, p.priceEur);
-    else incomplete = true;
-  });
-  return { value, incomplete };
-}
-
-/**
- * Αξία των αρχικών θέσεων την ημέρα που μπήκαν. Μετράει σαν «εισροή» στη μεταβολή αξίας του μήνα:
- * οι μετοχές υπήρχαν ήδη, οπότε δεν πρέπει να φανούν ως κέρδος (ούτε το κόστος τους, που είναι παλιό).
- */
-async function openingsValue(db: Db, prices: Prices, openings: Trade[]) {
-  const byId = new Map(db.select().from(instruments).all().map(i => [i.id, i]));
-  const points = await Promise.all(openings.map(t => prices.priceOn(byId.get(t.instrumentId)!, t.date)));
-  let value = 0;
-  let incomplete = false;
-  openings.forEach((t, i) => {
-    const p = points[i];
-    if (p) value += valueCents(t.quantity, p.priceEur);
-    else {
-      value += t.amountEur;
-      incomplete = true;
-    }
-  });
-  return { value, incomplete };
+  // Χρηματοδότηση μόνο για αγορές από άλλον λογαριασμό. Από τον ίδιο broker = από τα μετρητά του.
+  const funding = input.side === 'buy' && input.fundingAccountId !== input.accountId ? input.fundingAccountId : null;
+  if (funding != null) {
+    const account = db.select().from(accounts).where(eq(accounts.id, funding)).get();
+    if (!account || isDebtAccount(account)) throw new HttpError(400, 'Ο λογαριασμός «Χρήματα από» δεν υπάρχει');
+  }
+  return { ...input, fundingAccountId: funding };
 }
 
 export function investmentRoutes(app: FastifyInstance, db: Db, market: MarketData, prices: Prices) {
@@ -171,9 +210,9 @@ export function investmentRoutes(app: FastifyInstance, db: Db, market: MarketDat
   app.get('/api/trades', () => listTrades(db));
 
   app.post('/api/trades', (req, reply) => {
-    const row = toTradeRow(db, tradeInputSchema.parse(req.body));
+    const input = toTradeRow(db, tradeInputSchema.parse(req.body));
     reply.code(201);
-    return db.insert(trades).values(row).returning(TRADE_COLUMNS).get();
+    return insertTrades(db, [input])[0];
   });
 
   // Πολλές κινήσεις μαζί (αγορά στο pie): όλες ή καμία
@@ -181,21 +220,31 @@ export function investmentRoutes(app: FastifyInstance, db: Db, market: MarketDat
     const { trades: inputs } = tradeBatchSchema.parse(req.body);
     const rows = inputs.map(t => toTradeRow(db, t));
     reply.code(201);
-    return db.transaction(tx => rows.map(r => tx.insert(trades).values(r).returning(TRADE_COLUMNS).get()));
+    return insertTrades(db, rows);
   });
 
+  // Η χρηματοδότηση ξαναγίνεται από την αρχή: η παλιά μεταφορά μειώνεται (ή σβήνεται) και, αν χρειάζεται, γίνεται νέα
   app.put('/api/trades/:id', req => {
     const { id } = idParamSchema.parse(req.params);
-    const row = toTradeRow(db, tradeInputSchema.parse(req.body));
-    const updated = db.update(trades).set(row).where(eq(trades.id, id)).returning(TRADE_COLUMNS).get();
-    if (!updated) throw notFound('Η κίνηση');
-    return updated;
+    const input = toTradeRow(db, tradeInputSchema.parse(req.body));
+    db.transaction(tx => {
+      const old = tx.select().from(trades).where(eq(trades.id, id)).get();
+      if (!old) throw notFound('Η κίνηση');
+      const { fundingAccountId: _, ...row } = input;
+      tx.update(trades).set({ ...row, fundingTransactionId: null }).where(eq(trades.id, id)).run();
+      releaseFunding(tx, old.fundingTransactionId, old.amountEur);
+      fundTrades(tx, [{ id, input }]);
+    });
+    return getTrade(db, id);
   });
 
   app.delete('/api/trades/:id', (req, reply) => {
     const { id } = idParamSchema.parse(req.params);
-    const row = db.delete(trades).where(eq(trades.id, id)).returning().get();
-    if (!row) throw notFound('Η κίνηση');
+    db.transaction(tx => {
+      const old = tx.delete(trades).where(eq(trades.id, id)).returning().get();
+      if (!old) throw notFound('Η κίνηση');
+      releaseFunding(tx, old.fundingTransactionId, old.amountEur);
+    });
     return reply.code(204).send();
   });
 

@@ -14,10 +14,11 @@ import {
 } from '@budget/shared';
 import { AmountInput } from '@/components/AmountInput';
 import { Field } from '@/components/Field';
+import { defaultFunding, FundingSelect, toFundingAccountId } from '@/components/FundingSelect';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { piePreview, useInstruments, useSaveTradeBatch } from '@/lib/api';
+import { piePreview, useAccounts, useInstruments, useSaveTradeBatch } from '@/lib/api';
 import { toast } from 'sonner';
 
 /** `buy`: νέα αγορά, μοιρασμένη με τα ποσοστά. `opening`: αρχικές θέσεις όλων των μετοχών του pie μαζί. */
@@ -44,9 +45,11 @@ interface PieBuyDialogProps {
 
 export function PieBuyDialog({ pie, mode, onClose }: PieBuyDialogProps) {
   const { data: instruments = [] } = useInstruments();
+  const { data: accounts = [] } = useAccounts();
   const saveBatch = useSaveTradeBatch();
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(today());
+  const [funding, setFunding] = useState('');
   const [rows, setRows] = useState<Row[] | null>(null);
   // Το ποσό της αγοράς (cents), για να ξαναμοιράζεται όταν αλλάζουν τα ποσοστά
   const [totalEur, setTotalEur] = useState(0);
@@ -57,6 +60,7 @@ export function PieBuyDialog({ pie, mode, onClose }: PieBuyDialogProps) {
     if (!pie) return;
     setAmount('');
     setDate(today());
+    setFunding(defaultFunding(accounts));
     setError(null);
     // Για αρχικές θέσεις δεν χρειάζεται πρόταση: ο χρήστης συμπληρώνει ό,τι έχει
     setRows(mode === 'opening'
@@ -126,6 +130,7 @@ export function PieBuyDialog({ pie, mode, onClose }: PieBuyDialogProps) {
       }
       trades.push({
         date, accountId: pie.accountId, instrumentId: row.instrumentId, side: mode, quantity, amountEur, pieId: pie.id,
+        fundingAccountId: mode === 'buy' ? toFundingAccountId(funding) : null,
       });
     }
     if (trades.length === 0) return setError('Συμπλήρωσε τουλάχιστον μία μετοχή');
@@ -164,6 +169,15 @@ export function PieBuyDialog({ pie, mode, onClose }: PieBuyDialogProps) {
                 <Input id="pie-date" type="date" required value={date} max={today()} onChange={e => setDate(e.target.value)} />
               </Field>
             </div>
+            <Field label="Χρήματα από" hint="Η μεταφορά προς τον broker καταχωρείται μόνη της, μία για όλο το ποσό.">
+              <FundingSelect
+                accounts={accounts}
+                broker={accounts.find(a => a.id === pie?.accountId)}
+                value={funding}
+                onChange={setFunding}
+                amount={parseAmount(amount)}
+              />
+            </Field>
             {error && <p className="text-sm text-negative">{error}</p>}
             <DialogFooter>
               <Button type="submit" disabled={loading}>{loading ? 'Φέρνω τιμές…' : 'Υπολογισμός'}</Button>

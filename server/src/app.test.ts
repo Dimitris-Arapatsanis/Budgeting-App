@@ -57,7 +57,7 @@ describe('transactions & summary', () => {
     expect(october.body).toHaveLength(3);
 
     const summary = (await api<MonthSummary>('GET', '/api/summary?month=2026-10')).body;
-    expect(summary).toMatchObject({ income: 180_000, expenses: 150_000, savings: 30_000, setAside: 50_000, status: 'below-set-aside', fromSavings: 20_000 });
+    expect(summary).toMatchObject({ income: 180_000, expenses: 150_000, savings: 30_000, status: 'ok', fromSavings: 0 });
 
     const accounts = (await api<AccountWithBalance[]>('GET', '/api/accounts')).body;
     expect(accounts.find(a => a.id === f.piraeus)!.balance).toBe(180_000 - 50_000 - 150_000 - 1_000);

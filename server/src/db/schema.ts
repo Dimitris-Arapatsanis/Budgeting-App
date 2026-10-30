@@ -84,6 +84,10 @@ export const trades = sqliteTable(
     quantity: real('quantity').notNull(),
     amountEur: integer('amount_eur').notNull(),
     pieId: integer('pie_id').references(() => pies.id, { onDelete: 'set null' }),
+    /** Η μεταφορά που χρηματοδότησε την αγορά (μία μεταφορά μπορεί να καλύπτει όλη μια αγορά στο pie) */
+    fundingTransactionId: integer('funding_transaction_id').references(() => transactions.id),
+    /** Κινήσεις που αποθηκεύτηκαν μαζί (μια αγορά στο pie) έχουν το ίδιο batchId: το id της πρώτης */
+    batchId: integer('batch_id'),
     createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   t => [index('trades_date_idx').on(t.date)],

@@ -1,0 +1,1 @@
+ALTER TABLE `trades` ADD `funding_transaction_id` integer REFERENCES transactions(id);

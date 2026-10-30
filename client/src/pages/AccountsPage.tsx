@@ -1,4 +1,5 @@
-import { Archive, ArchiveRestore, Pencil, Plus, Scale, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, Pencil, Plus, RotateCcw, Scale, Trash2 } from 'lucide-react';
+import { useNavigate } from 'react-router';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
   ACCOUNT_TYPE_LABELS,
@@ -16,6 +17,7 @@ import { Amount } from '@/components/Amount';
 import { AmountInput } from '@/components/AmountInput';
 import { DebtsSection } from '@/components/DebtsSection';
 import { DonutChart } from '@/components/DonutChart';
+import { NetWorthOverview } from '@/components/NetWorth';
 import { Field } from '@/components/Field';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -23,7 +25,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ACCOUNT_ICON } from '@/lib/account-style';
-import { useAccounts, useDeleteAccount, useReconcileAccount, useSaveAccount } from '@/lib/api';
+import { useAccounts, useDeleteAccount, useNetWorth, useReconcileAccount, useReset, useSaveAccount } from '@/lib/api';
 import { toast } from 'sonner';
 
 type DialogState =
@@ -33,6 +35,7 @@ type DialogState =
 
 export function AccountsPage() {
   const { data: accounts = [] } = useAccounts();
+  const { data: netWorth } = useNetWorth();
   const save = useSaveAccount();
   const remove = useDeleteAccount();
   const [dialog, setDialog] = useState<DialogState>({ kind: 'closed' });
@@ -71,6 +74,13 @@ export function AccountsPage() {
           Ξεκίνα βάζοντας το <strong>αρχικό υπόλοιπο</strong> κάθε λογαριασμού: πόσα είχε πριν την πρώτη συναλλαγή
           που θα καταχωρήσεις. Πάτα το <Pencil className="inline size-3.5" /> δίπλα σε κάθε λογαριασμό.
         </p>
+      )}
+
+      {netWorth && (
+        <Card>
+          <CardHeader><CardTitle>Καθαρή περιουσία</CardTitle></CardHeader>
+          <CardContent><NetWorthOverview history={netWorth} /></CardContent>
+        </Card>
       )}
 
       <Card>
@@ -121,6 +131,8 @@ export function AccountsPage() {
           </ul>
         </section>
       )}
+
+      <ResetSection />
 
       <AccountDialog open={dialog.kind === 'edit'} account={dialog.kind === 'edit' ? dialog.account : undefined} onClose={close} />
       <ReconcileDialog account={dialog.kind === 'reconcile' ? dialog.account : undefined} onClose={close} />
@@ -295,5 +307,56 @@ function ReconcileDialog({ account, onClose }: { account?: AccountWithBalance; o
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** «Έναρξη από την αρχή»: αντίγραφο της βάσης, διαγραφή όλων και ξανά ο οδηγός «Ξεκίνα». */
+function ResetSection() {
+  const reset = useReset();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+
+  useEffect(() => {
+    if (open) setText('');
+  }, [open]);
+
+  function handleReset(e: FormEvent) {
+    e.preventDefault();
+    reset.mutate(undefined, {
+      onSuccess: ({ backup }) => {
+        setOpen(false);
+        toast.success('Όλα σβήστηκαν. Ξεκίνα από την αρχή.', { description: backup ? `Αντίγραφο: ${backup}` : undefined, duration: 10_000 });
+        navigate('/setup');
+      },
+    });
+  }
+
+  return (
+    <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed px-4 py-3 text-sm">
+      <span className="text-muted-foreground">Θέλεις να ξεκινήσεις από την αρχή; Όλα τα δεδομένα σβήνονται (με αντίγραφο ασφαλείας).</span>
+      <Button variant="ghost" size="sm" className="rounded-full text-negative hover:text-negative" onClick={() => setOpen(true)}>
+        <RotateCcw className="size-4" /> Έναρξη από την αρχή
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Έναρξη από την αρχή</DialogTitle>
+            <DialogDescription>
+              Σβήνονται <strong>όλα</strong>: συναλλαγές, μετοχές, χρωστούμενα, κατηγορίες και υπόλοιπα. Πριν από αυτό κρατιέται
+              αντίγραφο της βάσης στο <code>server/data/backups</code>. Μετά ανοίγει ο οδηγός «Ξεκίνα».
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleReset} className="grid gap-4">
+            <Field label="Γράψε ΔΙΑΓΡΑΦΗ για επιβεβαίωση" htmlFor="reset-confirm">
+              <Input id="reset-confirm" autoComplete="off" value={text} onChange={e => setText(e.target.value)} />
+            </Field>
+            <DialogFooter>
+              <Button type="submit" variant="destructive" disabled={text !== 'ΔΙΑΓΡΑΦΗ' || reset.isPending}>Διαγραφή όλων</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </section>
   );
 }

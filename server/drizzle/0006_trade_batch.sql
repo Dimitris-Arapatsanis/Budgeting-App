@@ -1,0 +1,1 @@
+ALTER TABLE `trades` ADD `batch_id` integer;

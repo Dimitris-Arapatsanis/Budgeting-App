@@ -8,6 +8,7 @@ import { AccountsPage } from '@/pages/AccountsPage';
 import { CategoriesPage } from '@/pages/CategoriesPage';
 import { InvestmentsPage } from '@/pages/InvestmentsPage';
 import { MonthPage } from '@/pages/MonthPage';
+import { SetupPage } from '@/pages/SetupPage';
 import { YearPage } from '@/pages/YearPage';
 import { ThemeProvider } from '@/lib/theme';
 import { currentMonth } from '@budget/shared';
@@ -29,6 +30,7 @@ const router = createBrowserRouter([
       { path: 'investments', element: <InvestmentsPage /> },
       { path: 'accounts', element: <AccountsPage /> },
       { path: 'categories', element: <CategoriesPage /> },
+      { path: 'setup', element: <SetupPage /> },
       { path: '*', element: <Navigate to="/" replace /> },
     ],
   },

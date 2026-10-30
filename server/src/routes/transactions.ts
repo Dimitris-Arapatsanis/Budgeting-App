@@ -1,4 +1,4 @@
-import { desc, eq, like } from 'drizzle-orm';
+import { desc, eq, isNotNull, like } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import {
   computeMonthSummary,
@@ -12,12 +12,18 @@ import {
   type Transaction,
 } from '@budget/shared';
 import type { Db } from '../db/index.ts';
-import { accounts, categories, transactions } from '../db/schema.ts';
+import { accounts, categories, trades, transactions } from '../db/schema.ts';
 import { HttpError, notFound } from '../http-error.ts';
 import { listTrades } from './investments.ts';
 
+/** Οι μεταφορές που φτιάχτηκαν αυτόματα για αγορές μετοχών («Χρήματα από»). */
+function fundingTransactionIds(db: Db) {
+  return new Set(db.select({ id: trades.fundingTransactionId }).from(trades).where(isNotNull(trades.fundingTransactionId)).all().map(r => r.id));
+}
+
 /** Συναλλαγές μιας περιόδου: `period` = "YYYY-MM" (μήνας) ή "YYYY" (έτος). */
 function periodTransactions(db: Db, period: string): Transaction[] {
+  const funding = fundingTransactionIds(db);
   return db.select({
     id: transactions.id,
     date: transactions.date,
@@ -32,7 +38,8 @@ function periodTransactions(db: Db, period: string): Transaction[] {
     .from(transactions)
     .where(like(transactions.date, `${period}-%`))
     .orderBy(desc(transactions.date), desc(transactions.id))
-    .all();
+    .all()
+    .map(t => (funding.has(t.id) ? { ...t, tradeFunding: true } : t));
 }
 
 /** Μετατρέπει το validated input σε γραμμή πίνακα, ελέγχοντας ότι λογαριασμοί/κατηγορία υπάρχουν. */
@@ -66,11 +73,14 @@ function toRow(db: Db, input: ParsedTransactionInput) {
   return row;
 }
 
-/** Οι συναλλαγές των χρωστούμενων αλλάζουν μόνο από τα χρωστούμενα. */
+/** Οι συναλλαγές των χρωστούμενων και οι μεταφορές των αγορών μετοχών αλλάζουν μόνο από εκεί που φτιάχτηκαν. */
 function checkNotDebt(db: Db, id: number) {
   const row = db.select({ debtId: transactions.debtId }).from(transactions).where(eq(transactions.id, id)).get();
   if (!row) throw notFound('Η συναλλαγή');
   if (row.debtId != null) throw new HttpError(409, 'Η συναλλαγή ανήκει σε χρωστούμενο. Άλλαξέ την από τους Λογαριασμούς.');
+  if (fundingTransactionIds(db).has(id)) {
+    throw new HttpError(409, 'Η μεταφορά ανήκει σε αγορά μετοχών. Άλλαξέ την από τις Επενδύσεις.');
+  }
 }
 
 export function transactionRoutes(app: FastifyInstance, db: Db) {

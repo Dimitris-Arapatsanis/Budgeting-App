@@ -46,3 +46,10 @@ export function addDays(date: string, days: number): string {
   const [y, m, d] = date.split('-').map(Number) as [number, number, number];
   return toIsoDate(new Date(y, m - 1, d + days));
 }
+
+/** Όλοι οι μήνες από `from` έως και `to`: ("2026-11", "2027-01") → ["2026-11", "2026-12", "2027-01"] */
+export function monthRange(from: string, to: string): string[] {
+  const months: string[] = [];
+  for (let m = from; m <= to; m = shiftMonth(m, 1)) months.push(m);
+  return months;
+}

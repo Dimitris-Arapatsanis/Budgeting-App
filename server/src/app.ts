@@ -8,14 +8,18 @@ import { accountRoutes } from './routes/accounts.ts';
 import { categoryRoutes } from './routes/categories.ts';
 import { debtRoutes } from './routes/debts.ts';
 import { investmentRoutes } from './routes/investments.ts';
+import { netWorthRoutes } from './routes/networth.ts';
+import { setupRoutes } from './routes/setup.ts';
 import { transactionRoutes } from './routes/transactions.ts';
 
 interface AppOptions extends Pick<FastifyServerOptions, 'logger'> {
   /** Πηγή τιμών (στα tests ένα fake) */
   market?: MarketData;
+  /** Φάκελος για αντίγραφα της βάσης πριν από «Έναρξη από την αρχή» (χωρίς αντίγραφο αν λείπει, π.χ. στα tests) */
+  backupDir?: string;
 }
 
-export function buildApp(db: Db, { logger = false, market = yahooMarketData() }: AppOptions = {}) {
+export function buildApp(db: Db, { logger = false, market = yahooMarketData(), backupDir }: AppOptions = {}) {
   const app = Fastify({ logger });
 
   app.setErrorHandler((error, req, reply) => {
@@ -34,7 +38,10 @@ export function buildApp(db: Db, { logger = false, market = yahooMarketData() }:
   categoryRoutes(app, db);
   transactionRoutes(app, db);
   debtRoutes(app, db);
-  investmentRoutes(app, db, market, new Prices(db, market));
+  const prices = new Prices(db, market);
+  investmentRoutes(app, db, market, prices);
+  netWorthRoutes(app, db, prices);
+  setupRoutes(app, db, { backupDir });
 
   return app;
 }

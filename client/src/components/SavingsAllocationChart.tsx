@@ -2,7 +2,8 @@ import { formatEur, type MonthSummary } from '@budget/shared';
 import { DonutChart, type DonutRow, type DonutSlice } from '@/components/DonutChart';
 import { useAccounts } from '@/lib/api';
 
-/** Κύκλος «Πού πήγε η αποταμίευση»: brokers ξεχωριστά, μετρητά (τράπεζες) μαζί. */
+/** Κύκλος «Πού πήγε η αποταμίευση»: brokers ξεχωριστά, τράπεζες και μετρητά μαζί. */
+const CASH = 'Τράπεζες';
 export function SavingsAllocationChart({ summary }: { summary: MonthSummary }) {
   const { data: accounts = [] } = useAccounts();
   const accountName = (id: number) => accounts.find(a => a.id === id)?.name ?? '—';
@@ -19,7 +20,7 @@ export function SavingsAllocationChart({ summary }: { summary: MonthSummary }) {
   const parts: DonutSlice[] = [
     ...allocation.accounts.map(a => ({ name: accountName(a.accountId), value: a.amount })),
     {
-      name: 'Μετρητά',
+      name: CASH,
       value: allocation.cash,
       details: allocation.cashByAccount.map(a => ({ name: accountName(a.accountId), value: a.amount })),
     },
@@ -28,7 +29,7 @@ export function SavingsAllocationChart({ summary }: { summary: MonthSummary }) {
   // Αρνητικά: π.χ. επένδυσες περισσότερα από όσα αποταμίευσες, άρα μειώθηκαν τα μετρητά
   const extraRows: DonutRow[] = parts
     .filter(p => p.value < 0)
-    .map(p => ({ name: p.name === 'Μετρητά' ? 'Μετρητά (από τα μαζεμένα)' : p.name, value: p.value }));
+    .map(p => ({ name: p.name === CASH ? `${CASH} (από τα μαζεμένα)` : p.name, value: p.value }));
 
   return (
     <DonutChart

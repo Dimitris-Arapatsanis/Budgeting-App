@@ -128,6 +128,8 @@ export interface Transaction {
   description: string;
   /** Αν η συναλλαγή ανήκει σε χρωστούμενο (δανεισμός, επιστροφή, «χαρίστηκε») */
   debtId?: number | null;
+  /** Μεταφορά που φτιάχτηκε αυτόματα για αγορά μετοχών («Χρήματα από») */
+  tradeFunding?: boolean;
 }
 
 // ---------- Επενδύσεις ----------
@@ -173,6 +175,11 @@ export const tradeInputSchema = z.object({
   /** Συνολικό ποσό σε EUR (cents), μαζί με τυχόν χρεώσεις */
   amountEur: positiveAmount,
   pieId: id.nullable().default(null),
+  /**
+   * Μόνο για αγορές: από ποιον λογαριασμό ήρθαν τα λεφτά (π.χ. Πειραιώς). Η εφαρμογή καταχωρεί μαζί τη
+   * μεταφορά προς τον broker. null = από τα μετρητά που έχει ήδη ο broker.
+   */
+  fundingAccountId: id.nullable().default(null),
 });
 export type TradeInput = z.input<typeof tradeInputSchema>;
 export type ParsedTradeInput = z.output<typeof tradeInputSchema>;
@@ -188,6 +195,12 @@ export interface Trade {
   quantity: number;
   amountEur: number;
   pieId: number | null;
+  /** Ο λογαριασμός της μεταφοράς που χρηματοδότησε την αγορά (null = μετρητά του broker) */
+  fundingAccountId: number | null;
+  /** Η μεταφορά «Χρήματα από». Κοινή για όλες τις μετοχές μιας αγοράς στο pie, άρα ξεχωρίζει τις αγορές μεταξύ τους */
+  fundingTransactionId: number | null;
+  /** Ίδιο για όλες τις κινήσεις που αποθηκεύτηκαν μαζί (μια αγορά στο pie) */
+  batchId: number | null;
 }
 
 export const pieInputSchema = z.object({
@@ -294,8 +307,11 @@ export const debtInputSchema = z.object({
   reason: z.string().trim().max(200).default(''),
   date: z.string().regex(ISO_DATE_RE, 'Μη έγκυρη ημερομηνία'),
   amount: positiveAmount,
-  /** Από πού βγήκαν (δάνεισα) ή πού μπήκαν (δανείστηκα) τα λεφτά */
-  accountId: id,
+  /**
+   * Από πού βγήκαν (δάνεισα) ή πού μπήκαν (δανείστηκα) τα λεφτά.
+   * null = «παλιό χρέος»: υπήρχε ήδη πριν ξεκινήσεις, δεν κινείται κανένας λογαριασμός.
+   */
+  accountId: id.nullable(),
 });
 export type DebtInput = z.input<typeof debtInputSchema>;
 
@@ -330,12 +346,44 @@ export interface Debt {
   reason: string;
   date: string;
   amount: number;
-  accountId: number;
+  /** null = παλιό χρέος (χωρίς κίνηση λογαριασμού) */
+  accountId: number | null;
   /** Όσα επιστράφηκαν ή χαρίστηκαν */
   settled: number;
   outstanding: number;
   payments: DebtPayment[];
 }
+
+// ---------- Αρχικοποίηση ----------
+
+/**
+ * Ό,τι υπάρχει όταν ο χρήστης ξεκινάει: υπόλοιπα, μετοχές, χρωστούμενα. Είναι η αφετηρία:
+ * δεν μετράει ποτέ ως έσοδο, έξοδο ή μεταβολή περιουσίας.
+ */
+export const setupInputSchema = z.object({
+  startDate: z.string().regex(ISO_DATE_RE, 'Μη έγκυρη ημερομηνία'),
+  balances: z.array(z.object({ accountId: id, initialBalance: z.number().int() })),
+  positions: z.array(z.object({
+    accountId: id,
+    instrumentId: id,
+    quantity: z.number().positive('Η ποσότητα πρέπει να είναι θετική'),
+    amountEur: positiveAmount,
+  })),
+  debts: z.array(z.object({
+    direction: z.enum(DEBT_DIRECTIONS),
+    person: z.string().trim().min(1, 'Γράψε σε ποιον / από ποιον').max(60),
+    reason: z.string().trim().max(200).default(''),
+    amount: positiveAmount,
+  })),
+});
+export type SetupInput = z.input<typeof setupInputSchema>;
+
+export interface SetupStatus {
+  /** Καμία κίνηση και όλα τα υπόλοιπα 0: ανοίγει ο οδηγός «Ξεκίνα» */
+  empty: boolean;
+}
+
+export const resetInputSchema = z.object({ confirm: z.literal('ΔΙΑΓΡΑΦΗ', { message: 'Γράψε ΔΙΑΓΡΑΦΗ για επιβεβαίωση' }) });
 
 export const monthQuerySchema = z.object({
   month: z.string().regex(MONTH_KEY_RE, 'Ο μήνας πρέπει να είναι της μορφής YYYY-MM'),

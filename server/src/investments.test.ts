@@ -62,7 +62,7 @@ describe('trades', () => {
     expect(await balanceOf(f.revolut)).toBe(-13_000);
 
     const summary = (await api<MonthSummary>('GET', '/api/summary?month=2026-08')).body;
-    expect(summary).toMatchObject({ invested: 13_000, savedCash: -13_000 });
+    expect(summary).toMatchObject({ invested: 13_000 });
 
     await api('DELETE', `/api/trades/${buy.body.id}`);
     expect(await balanceOf(f.revolut)).toBe(0);

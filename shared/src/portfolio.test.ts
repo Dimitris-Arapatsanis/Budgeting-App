@@ -11,7 +11,7 @@ const MSFT = 2;
 
 let nextId = 1;
 function trade(partial: Partial<Trade> & Pick<Trade, 'side' | 'quantity' | 'amountEur'>): Trade {
-  return { id: nextId++, date: '2026-10-05', accountId: REVOLUT, instrumentId: VUSA, pieId: null, ...partial };
+  return { id: nextId++, date: '2026-10-05', accountId: REVOLUT, instrumentId: VUSA, pieId: null, fundingAccountId: null, fundingTransactionId: null, batchId: null, ...partial };
 }
 
 describe('computeHoldings', () => {
@@ -86,11 +86,11 @@ describe('trades in balances and month summary', () => {
     expect(computeBalances(accounts, [], '2026-10-31', trades).get(REVOLUT)).toBe(7_000);
   });
 
-  it('splits savings into stocks and cash', () => {
+  it('counts buys (not openings) as invested', () => {
     const salary = { id: 1, date: '2026-10-01', type: 'income' as const, amount: 180_000, accountId: 1, toAccountId: null, categoryId: 1, description: '' };
     const rent = { ...salary, id: 2, type: 'expense' as const, amount: 100_000 };
     const trades = [trade({ side: 'buy', quantity: 1, amountEur: 30_000 }), trade({ side: 'opening', quantity: 5, amountEur: 500_000 })];
     const s = computeMonthSummary([salary, rent], accounts, trades);
-    expect(s).toMatchObject({ savings: 80_000, invested: 30_000, savedCash: 50_000, status: 'ok' });
+    expect(s).toMatchObject({ savings: 80_000, invested: 30_000, status: 'ok' });
   });
 });

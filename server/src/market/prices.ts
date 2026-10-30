@@ -9,6 +9,8 @@ export interface LivePrice extends PricePoint {
   changeEur: number;
 }
 
+type History = Awaited<ReturnType<MarketData['history']>>;
+
 const QUOTE_TTL_MS = 15 * 60_000;
 // Πόσες μέρες πίσω ψάχνουμε κλείσιμο (Σαββατοκύριακα, αργίες)
 const LOOKBACK_DAYS = 7;
@@ -85,10 +87,42 @@ export class Prices {
     return { price: close.close, currency: instrument.currency, fxRate, priceEur: toEur(close.close, fxRate), date: close.date };
   }
 
+  /**
+   * Φέρνει με μία κλήση ανά μετοχή (και ανά ισοτιμία) τα κλεισίματα που λείπουν από τη βάση για πολλές
+   * ημερομηνίες, π.χ. τα τέλη όλων των μηνών. Μετά το `priceOn` τα βρίσκει στη βάση χωρίς δίκτυο.
+   */
+  async prefetch(needed: Array<{ instrument: Instrument; date: string }>) {
+    const past = needed.filter(n => n.date < today());
+    const byKey = new Map<string, { symbol: string; dates: string[]; save: (r: History) => void }>();
+    const add = (key: string, symbol: string, date: string, save: (r: History) => void) => {
+      const job = byKey.get(key) ?? { symbol, dates: [], save };
+      job.dates.push(date);
+      byKey.set(key, job);
+    };
+    for (const { instrument, date } of past) {
+      if (!this.cachedPrice(instrument.id, date)) {
+        add(`i${instrument.id}`, instrument.ticker, date, ({ currency, closes }) => {
+          const { factor } = normalizeCurrency(currency);
+          for (const c of closes) this.savePrice(instrument, c.date, c.close * factor);
+        });
+      }
+      const currency = instrument.currency;
+      if (currency !== 'EUR' && !this.cachedFx(currency, date)) {
+        add(`fx${currency}`, fxTicker(currency), date, ({ closes }) => {
+          for (const c of closes) this.saveFx(currency, c.date, c.close);
+        });
+      }
+    }
+    await Promise.all([...byKey.values()].map(async job => {
+      const dates = job.dates.sort();
+      job.save(await this.fetchHistory(job.symbol, addDays(dates[0]!, -LOOKBACK_DAYS - 3), dates.at(-1)!));
+    }));
+  }
+
   private async closeOn(instrument: Instrument, date: string) {
     const cached = this.cachedPrice(instrument.id, date);
     if (cached) return cached;
-    const { currency, closes } = await this.fetchHistory(instrument.ticker, date);
+    const { currency, closes } = await this.fetchHistory(instrument.ticker, addDays(date, -LOOKBACK_DAYS - 3), date);
     const { factor } = normalizeCurrency(currency);
     for (const c of closes) this.savePrice(instrument, c.date, c.close * factor);
     return this.cachedPrice(instrument.id, date);
@@ -98,7 +132,9 @@ export class Prices {
     if (currency === 'EUR') return 1;
     const cached = this.cachedFx(currency, date);
     if (cached) return cached.rate;
-    for (const c of (await this.fetchHistory(fxTicker(currency), date)).closes) this.saveFx(currency, c.date, c.close);
+    for (const c of (await this.fetchHistory(fxTicker(currency), addDays(date, -LOOKBACK_DAYS - 3), date)).closes) {
+      this.saveFx(currency, c.date, c.close);
+    }
     return this.cachedFx(currency, date)?.rate ?? null;
   }
 
@@ -122,13 +158,13 @@ export class Prices {
     }
   }
 
-  /** Κλεισίματα γύρω από μια ημερομηνία. Κάθε διάστημα ζητείται μία φορά ανά εκκίνηση του server. */
-  private async fetchHistory(symbol: string, date: string) {
-    const key = `${symbol}:${date}`;
+  /** Κλεισίματα στο διάστημα [from, to]. Κάθε διάστημα ζητείται μία φορά ανά εκκίνηση του server. */
+  private async fetchHistory(symbol: string, from: string, to: string) {
+    const key = `${symbol}:${from}:${to}`;
     const empty = { currency: undefined, closes: [] };
     if (this.triedHistory.has(key)) return empty;
     try {
-      const result = await this.market.history(symbol, addDays(date, -LOOKBACK_DAYS - 3), date);
+      const result = await this.market.history(symbol, from, to);
       this.triedHistory.add(key);
       return result;
     } catch {

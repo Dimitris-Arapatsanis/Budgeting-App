@@ -1,14 +1,15 @@
 import { ArrowDownLeft, ArrowUpRight, CalendarCheck, ChartLine, TrendingDown, TrendingUp } from 'lucide-react';
 import { Navigate, useNavigate, useParams } from 'react-router';
 import { Bar, BarChart, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { formatEur, formatMonth, type MonthStatus, type YearMonth, type YearSummary } from '@budget/shared';
+import { formatEur, formatMonth, type MonthStatus, type NetWorthHistory, type YearMonth, type YearSummary } from '@budget/shared';
 import { Amount } from '@/components/Amount';
 import { DonutChart } from '@/components/DonutChart';
+import { NetWorthChange, NetWorthChart, NetWorthDonut } from '@/components/NetWorth';
 import { PeriodNav } from '@/components/PeriodNav';
 import { SavingsAllocationChart } from '@/components/SavingsAllocationChart';
 import { StatCard } from '@/components/StatCard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useCategories, useYearSummary } from '@/lib/api';
+import { useCategories, useNetWorth, useYearSummary } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 const MONTH_SHORT = ['Ιαν', 'Φεβ', 'Μαρ', 'Απρ', 'Μαΐ', 'Ιουν', 'Ιουλ', 'Αυγ', 'Σεπ', 'Οκτ', 'Νοε', 'Δεκ'];
@@ -30,6 +31,7 @@ export function YearPage() {
 function YearView({ year }: { year: number }) {
   const { data } = useYearSummary(year);
   const { data: categories = [] } = useCategories();
+  const { data: netWorth } = useNetWorth();
   const category = (id: number) => categories.find(c => c.id === id);
   const thisYear = new Date().getFullYear();
 
@@ -46,6 +48,8 @@ function YearView({ year }: { year: number }) {
       {data && (
         <>
           <YearStats data={data} />
+
+          {netWorth && <YearNetWorth year={year} netWorth={netWorth} />}
 
           <Card>
             <CardHeader><CardTitle>Αποταμίευση ανά μήνα</CardTitle></CardHeader>
@@ -71,11 +75,47 @@ function YearView({ year }: { year: number }) {
 
           <Card>
             <CardHeader><CardTitle>Ανά μήνα</CardTitle></CardHeader>
-            <CardContent><MonthsTable data={data} /></CardContent>
+            <CardContent><MonthsTable data={data} netWorth={netWorth} /></CardContent>
           </Card>
         </>
       )}
     </div>
+  );
+}
+
+/** Καθαρή περιουσία: πορεία μέσα στο έτος, κατανομή στο τέλος του και πώς άλλαξε. */
+function YearNetWorth({ year, netWorth }: { year: number; netWorth: NetWorthHistory }) {
+  const months = netWorth.months.filter(m => m.month.startsWith(`${year}-`));
+  const y = netWorth.years.find(x => x.year === year);
+  if (!y || months.length === 0) {
+    if (!netWorth.since || year > new Date().getFullYear()) return null;
+    return (
+      <p className="rounded-2xl bg-muted px-4 py-3 text-sm text-muted-foreground">
+        Η καθαρή περιουσία υπολογίζεται από τον πρώτο μήνα με κινήσεις ({formatMonth(netWorth.since)}).
+      </p>
+    );
+  }
+  const isCurrent = year === new Date().getFullYear();
+  const startLabel = months[0]!.month.endsWith('-01') ? 'αρχή έτους' : `αρχή ${formatMonth(months[0]!.month)}`;
+  return (
+    <>
+      <Card>
+        <CardHeader><CardTitle>Καθαρή περιουσία</CardTitle></CardHeader>
+        <CardContent><NetWorthChart months={months} /></CardContent>
+      </Card>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader><CardTitle>{isCurrent ? 'Σήμερα' : `Στο τέλος του ${year}`}</CardTitle></CardHeader>
+          <CardContent><NetWorthDonut breakdown={months.at(-1)!.end} /></CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle>Πώς άλλαξε το {year}</CardTitle></CardHeader>
+          <CardContent>
+            <NetWorthChange parts={y} startLabel={startLabel} endLabel={isCurrent ? 'σήμερα' : 'τέλος έτους'} />
+          </CardContent>
+        </Card>
+      </div>
+    </>
   );
 }
 
@@ -172,11 +212,12 @@ function SavingsBarChart({ months }: { months: YearMonth[] }) {
 
 const STATUS: Record<MonthStatus, { className: string; title: string }> = {
   ok: { className: 'bg-positive', title: 'Εντάξει' },
-  'below-set-aside': { className: 'bg-warning', title: 'Αποταμίευσες λιγότερα από όσα έβαλες στην άκρη' },
   overspent: { className: 'bg-negative', title: 'Ξεπέρασες τα έσοδα' },
 };
 
-function MonthsTable({ data }: { data: YearSummary }) {
+function MonthsTable({ data, netWorth }: { data: YearSummary; netWorth?: NetWorthHistory }) {
+  const nw = (month: string) => netWorth?.months.find(m => m.month === month);
+  const yearNw = netWorth?.years.find(y => y.year === data.year);
   const navigate = useNavigate();
   const t = data.total;
   const num = 'px-3 py-2 text-right tabular-nums whitespace-nowrap';
@@ -191,8 +232,9 @@ function MonthsTable({ data }: { data: YearSummary }) {
             <th className={cn(num, 'font-medium')}>Έξοδα</th>
             <th className={cn(num, 'font-medium')}>Αποταμίευση</th>
             <th className={cn(num, 'font-medium')}>%</th>
-            <th className={cn(num, 'font-medium')}>Στην άκρη</th>
             <th className={cn(num, 'font-medium')}>Σε brokers</th>
+            <th className={cn(num, 'font-medium')}>Περιουσία</th>
+            <th className={cn(num, 'font-medium')}>Μεταβολή</th>
             <th className="w-6" />
           </tr>
         </thead>
@@ -210,8 +252,9 @@ function MonthsTable({ data }: { data: YearSummary }) {
                   <td className={num}>{formatEur(s.expenses)}</td>
                   <td className={num}><Amount cents={s.savings} signed colored /></td>
                   <td className={cn(num, 'text-muted-foreground')}>{formatRate(s.savingsRate)}</td>
-                  <td className={num}>{s.setAside ? formatEur(s.setAside) : '—'}</td>
                   <td className={num}>{s.toBrokers ? formatEur(s.toBrokers) : '—'}</td>
+                  <td className={num}>{nw(month) ? formatEur(nw(month)!.end.total) : '—'}</td>
+                  <td className={num}>{nw(month) ? <Amount cents={nw(month)!.change} signed colored /> : '—'}</td>
                   <td className="py-2 pl-1">
                     {(s.income > 0 || s.expenses > 0) && (
                       <span title={STATUS[s.status].title} className={cn('block size-2 rounded-full', STATUS[s.status].className)} />
@@ -219,7 +262,12 @@ function MonthsTable({ data }: { data: YearSummary }) {
                   </td>
                 </>
               ) : (
-                <td colSpan={7} className="px-3 py-2 text-right">—</td>
+                <>
+                  <td colSpan={5} className="px-3 py-2 text-right">—</td>
+                  <td className={num}>{nw(month) ? formatEur(nw(month)!.end.total) : '—'}</td>
+                  <td className={num}>{nw(month) ? <Amount cents={nw(month)!.change} signed colored /> : '—'}</td>
+                  <td />
+                </>
               )}
             </tr>
           ))}
@@ -231,8 +279,9 @@ function MonthsTable({ data }: { data: YearSummary }) {
             <td className={num}>{formatEur(t.expenses)}</td>
             <td className={num}><Amount cents={t.savings} signed colored /></td>
             <td className={cn(num, 'text-muted-foreground')}>{formatRate(t.savingsRate)}</td>
-            <td className={num}>{t.setAside ? formatEur(t.setAside) : '—'}</td>
             <td className={num}>{t.toBrokers ? formatEur(t.toBrokers) : '—'}</td>
+            <td className={num}>{yearNw ? formatEur(yearNw.end) : '—'}</td>
+            <td className={num}>{yearNw ? <Amount cents={yearNw.change} signed colored /> : '—'}</td>
             <td />
           </tr>
         </tfoot>

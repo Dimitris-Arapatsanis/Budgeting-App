@@ -4,6 +4,7 @@ import {
   ACCOUNT_TYPE_LABELS,
   buildDebt,
   debtForgiveSchema,
+  isDebtOpening,
   debtInputSchema,
   debtPaymentSchema,
   idParamSchema,
@@ -19,7 +20,7 @@ import { HttpError, notFound } from '../http-error.ts';
 const debtAccountType = (direction: DebtDirection) => (direction === 'lent' ? 'receivable' : 'payable');
 
 /** Ο λογαριασμός συστήματος για μια κατεύθυνση. Φτιάχνεται την πρώτη φορά που χρειάζεται. */
-function debtAccount(db: Db, direction: DebtDirection, create = true) {
+export function debtAccount(db: Db, direction: DebtDirection, create = true) {
   const type = debtAccountType(direction);
   const existing = db.select().from(accounts).where(eq(accounts.type, type)).get();
   if (existing || !create) return existing;
@@ -49,8 +50,30 @@ function getDebt(db: Db, id: number): Debt {
   return debt;
 }
 
+/**
+ * Η συναλλαγή που ανοίγει ένα χρωστούμενο. Με λογαριασμό: μεταφορά από/προς αυτόν. Χωρίς (παλιό χρέος):
+ * διόρθωση στον λογαριασμό συστήματος, που δεν μετράει πουθενά ως κίνηση.
+ */
+export function debtOpeningRow(
+  debt: { id: number; direction: DebtDirection; person: string; date: string; amount: number; accountId: number | null },
+  systemAccountId: number,
+) {
+  const lent = debt.direction === 'lent';
+  const common = { date: debt.date, amount: debt.amount, description: debt.person, debtId: debt.id };
+  if (debt.accountId == null) {
+    return { ...common, type: 'adjustment' as const, amount: lent ? debt.amount : -debt.amount, accountId: systemAccountId, toAccountId: null };
+  }
+  return {
+    ...common,
+    type: 'transfer' as const,
+    accountId: lent ? debt.accountId : systemAccountId,
+    toAccountId: lent ? systemAccountId : debt.accountId,
+  };
+}
+
 /** Λογαριασμός του χρήστη (όχι συστήματος) που υπάρχει. */
-function checkUserAccount(db: Db, id: number) {
+function checkUserAccount(db: Db, id: number | null) {
+  if (id == null) return;
   const account = db.select().from(accounts).where(eq(accounts.id, id)).get();
   if (!account || isDebtAccount(account)) throw new HttpError(400, 'Ο λογαριασμός δεν υπάρχει');
 }
@@ -68,16 +91,7 @@ export function debtRoutes(app: FastifyInstance, db: Db) {
       const debt = tx.insert(debts)
         .values({ direction: input.direction, person: input.person, reason: input.reason, date: input.date })
         .returning().get();
-      const lent = input.direction === 'lent';
-      tx.insert(transactions).values({
-        date: input.date,
-        type: 'transfer',
-        amount: input.amount,
-        accountId: lent ? input.accountId : system.id,
-        toAccountId: lent ? system.id : input.accountId,
-        description: input.person,
-        debtId: debt.id,
-      }).run();
+      tx.insert(transactions).values(debtOpeningRow({ ...input, id: debt.id }, system.id)).run();
       return debt.id;
     });
     reply.code(201);
@@ -94,19 +108,12 @@ export function debtRoutes(app: FastifyInstance, db: Db) {
       throw new HttpError(400, 'Το ποσό δεν μπορεί να είναι μικρότερο από όσα έχουν ήδη επιστραφεί');
     }
     const system = debtAccount(db, current.direction)!;
-    const lent = current.direction === 'lent';
-    const openingId = db.select().from(transactions)
-      .where(and(eq(transactions.debtId, id), eq(transactions.type, 'transfer'), eq(lent ? transactions.toAccountId : transactions.accountId, system.id)))
-      .get()!.id;
+    const opening = db.select().from(transactions).where(eq(transactions.debtId, id)).all()
+      .find(t => isDebtOpening(t, current.direction, system.id))!;
+    // Το άνοιγμα ξαναγράφεται: μπορεί να αλλάξει από μεταφορά σε παλιό χρέος και αντίστροφα
     db.transaction(tx => {
       tx.update(debts).set({ person: input.person, reason: input.reason, date: input.date }).where(eq(debts.id, id)).run();
-      tx.update(transactions).set({
-        date: input.date,
-        amount: input.amount,
-        accountId: lent ? input.accountId : system.id,
-        toAccountId: lent ? system.id : input.accountId,
-        description: input.person,
-      }).where(eq(transactions.id, openingId)).run();
+      tx.update(transactions).set(debtOpeningRow({ ...input, id }, system.id)).where(eq(transactions.id, opening.id)).run();
     });
     return getDebt(db, id);
   });

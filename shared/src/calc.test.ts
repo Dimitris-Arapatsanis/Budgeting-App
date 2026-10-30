@@ -26,13 +26,13 @@ function tx(partial: Partial<Transaction> & Pick<Transaction, 'type' | 'amount'>
 }
 
 const salary = tx({ type: 'income', amount: 180_000, categoryId: 1 });
-const setAside500 = tx({ type: 'transfer', amount: 50_000, toAccountId: ALPHA });
+const toAlpha500 = tx({ type: 'transfer', amount: 50_000, toAccountId: ALPHA });
 
 describe('computeBalances', () => {
   it('applies income, expenses, transfers and adjustments', () => {
     const txs = [
       salary,
-      setAside500,
+      toAlpha500,
       tx({ type: 'expense', amount: 30_000, categoryId: 10 }),
       tx({ type: 'transfer', amount: 10_000, toAccountId: T212 }),
       tx({ type: 'adjustment', amount: -1_500, accountId: ALPHA }),
@@ -50,15 +50,10 @@ describe('computeBalances', () => {
 });
 
 describe('computeMonthSummary', () => {
-  it('is ok when savings cover what was set aside', () => {
-    const s = computeMonthSummary([salary, setAside500, tx({ type: 'expense', amount: 100_000, categoryId: 10 })], accounts);
-    expect(s).toMatchObject({ income: 180_000, expenses: 100_000, savings: 80_000, setAside: 50_000, status: 'ok', fromSavings: 0 });
-    expect(s.savingsRate).toBeCloseTo(80 / 180);
-  });
-
-  it('reports money taken back from savings when spending exceeds what was left', () => {
-    const s = computeMonthSummary([salary, setAside500, tx({ type: 'expense', amount: 150_000, categoryId: 10 })], accounts);
-    expect(s).toMatchObject({ savings: 30_000, setAside: 50_000, status: 'below-set-aside', fromSavings: 20_000 });
+  it('is ok when income covers expenses, whatever account the money is in', () => {
+    const s = computeMonthSummary([salary, toAlpha500, tx({ type: 'expense', amount: 150_000, categoryId: 10 })], accounts);
+    expect(s).toMatchObject({ income: 180_000, expenses: 150_000, savings: 30_000, status: 'ok', fromSavings: 0 });
+    expect(s.savingsRate).toBeCloseTo(30 / 180);
   });
 
   it('is overspent when expenses exceed income', () => {
@@ -68,15 +63,10 @@ describe('computeMonthSummary', () => {
 
   it('does not treat transfers (savings or broker) as income or expenses', () => {
     const s = computeMonthSummary(
-      [salary, setAside500, tx({ type: 'transfer', amount: 10_000, toAccountId: T212 })],
+      [salary, toAlpha500, tx({ type: 'transfer', amount: 10_000, toAccountId: T212 })],
       accounts,
     );
     expect(s).toMatchObject({ income: 180_000, expenses: 0, savings: 180_000, balanceChange: 180_000 });
-  });
-
-  it('nets transfers back out of savings', () => {
-    const back = tx({ type: 'transfer', amount: 20_000, accountId: ALPHA, toAccountId: PIRAEUS });
-    expect(computeMonthSummary([salary, setAside500, back], accounts).setAside).toBe(30_000);
   });
 
   it('groups expenses by category, largest first', () => {
@@ -99,7 +89,7 @@ describe('computeMonthSummary', () => {
     const s = computeMonthSummary(
       [
         salary,
-        setAside500,
+        toAlpha500,
         tx({ type: 'expense', amount: 145_000, categoryId: 10 }),
         tx({ type: 'transfer', amount: 10_000, toAccountId: T212 }),
         tx({ type: 'adjustment', amount: -999, accountId: ALPHA }),

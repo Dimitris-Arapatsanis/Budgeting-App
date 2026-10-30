@@ -87,8 +87,7 @@ export function computeSavingsAllocation(
 }
 
 export type MonthStatus =
-  | 'ok' // αποταμίευσες τουλάχιστον όσα έβαλες στην άκρη
-  | 'below-set-aside' // αποταμίευσες λιγότερα από όσα έβαλες στην άκρη
+  | 'ok' // έσοδα ≥ έξοδα
   | 'overspent'; // έξοδα > έσοδα
 
 export interface MonthSummary {
@@ -98,13 +97,11 @@ export interface MonthSummary {
   savings: number;
   /** savings / income, null αν δεν υπάρχουν έσοδα */
   savingsRate: number | null;
-  /** καθαρές μεταφορές προς λογαριασμούς αποταμίευσης */
-  setAside: number;
   adjustments: number;
   /** συνολική μεταβολή υπολοίπων όλων των λογαριασμών */
   balanceChange: number;
   status: MonthStatus;
-  /** πόσα ήρθαν από τα μαζεμένα (0 αν status = ok) */
+  /** πόσα ήρθαν από τα μαζεμένα σε μείον μήνα (0 αν status = ok) */
   fromSavings: number;
   expensesByCategory: CategoryTotal[];
   incomeByCategory: CategoryTotal[];
@@ -113,8 +110,6 @@ export interface MonthSummary {
   toBrokers: number;
   /** σε μετοχές: αγορές − πωλήσεις του μήνα (χωρίς αρχικές θέσεις) */
   invested: number;
-  /** σε μετρητά: αποταμίευση − invested. Αρνητικό = πήρες από τα μαζεμένα για να επενδύσεις ή να ξοδέψεις */
-  savedCash: number;
 }
 
 function totalsByCategory(transactions: Transaction[]): CategoryTotal[] {
@@ -134,7 +129,6 @@ export function computeMonthSummary(
   accounts: Pick<Account, 'id' | 'type'>[],
   trades: Trade[] = [],
 ): MonthSummary {
-  const savingsAccounts = new Set(accounts.filter(a => a.type === 'savings').map(a => a.id));
   const incomeTxs = transactions.filter(t => t.type === 'income');
   const expenseTxs = transactions.filter(t => t.type === 'expense');
 
@@ -144,47 +138,28 @@ export function computeMonthSummary(
   const savings = income - expenses;
   const adjustments = sum(transactions.filter(t => t.type === 'adjustment'));
 
-  let setAside = 0;
-  for (const t of transactions) {
-    if (t.type !== 'transfer' || t.toAccountId == null) continue;
-    const fromSavings = savingsAccounts.has(t.accountId);
-    const toSavings = savingsAccounts.has(t.toAccountId);
-    if (toSavings && !fromSavings) setAside += t.amount;
-    if (fromSavings && !toSavings) setAside -= t.amount;
-  }
-
   const allocation = computeSavingsAllocation(transactions, accounts);
   const brokerIds = new Set(accounts.filter(a => a.type === 'broker').map(a => a.id));
   const toBrokers = allocation.accounts.filter(a => brokerIds.has(a.accountId)).reduce((acc, a) => acc + a.amount, 0);
 
   const invested = trades.reduce((acc, t) => acc - tradeCashEffect(t), 0);
 
-  let status: MonthStatus = 'ok';
-  let fromSavings = 0;
-  if (savings < 0) {
-    status = 'overspent';
-    fromSavings = -savings;
-  } else if (setAside > savings) {
-    status = 'below-set-aside';
-    fromSavings = setAside - savings;
-  }
+  const status: MonthStatus = savings < 0 ? 'overspent' : 'ok';
 
   return {
     income,
     expenses,
     savings,
     savingsRate: income > 0 ? savings / income : null,
-    setAside,
     adjustments,
     balanceChange: savings + adjustments,
     status,
-    fromSavings,
+    fromSavings: Math.max(0, -savings),
     expensesByCategory: totalsByCategory(expenseTxs),
     incomeByCategory: totalsByCategory(incomeTxs),
     allocation,
     toBrokers,
     invested,
-    savedCash: savings - invested,
   };
 }
 

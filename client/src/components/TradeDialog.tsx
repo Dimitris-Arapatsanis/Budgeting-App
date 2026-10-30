@@ -15,6 +15,7 @@ import {
 } from '@budget/shared';
 import { AmountInput } from '@/components/AmountInput';
 import { Field } from '@/components/Field';
+import { BROKER_CASH, defaultFunding, FundingSelect, toFundingAccountId } from '@/components/FundingSelect';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -26,7 +27,7 @@ import { cn } from '@/lib/utils';
 const SIDES: TradeSide[] = ['buy', 'opening', 'sell'];
 
 const SIDE_HINT: Record<TradeSide, string> = {
-  buy: 'Γράψε ποσότητα και ποσό όπως τα δείχνει η εφαρμογή του broker. Το ποσό βγαίνει από τα μετρητά του λογαριασμού.',
+  buy: 'Γράψε ποσότητα και ποσό όπως τα δείχνει η εφαρμογή του broker, και από πού ήρθαν τα λεφτά: η μεταφορά προς τον broker καταχωρείται μόνη της.',
   opening: 'Μετοχές που είχες ήδη: η ποσότητα και πόσα πλήρωσες συνολικά. Δεν επηρεάζει τα μετρητά ούτε τις αγορές του μήνα.',
   sell: 'Το ποσό μπαίνει στα μετρητά του λογαριασμού.',
 };
@@ -38,6 +39,8 @@ interface FormState {
   quantity: string;
   amount: string;
   date: string;
+  /** «Χρήματα από» (μόνο για αγορά): id λογαριασμού ή BROKER_CASH */
+  funding: string;
 }
 
 /** Ο λογαριασμός που ταιριάζει σε μια μετοχή: του pie που την έχει, αλλιώς ο πρώτος broker. */
@@ -46,7 +49,14 @@ function defaultAccount(instrumentId: number | undefined, pies: Pie[], brokers: 
   return String(pie?.accountId ?? brokers[0]?.id ?? '');
 }
 
-function initialState(trade: Trade | undefined, side: TradeSide, instruments: Instrument[], pies: Pie[], brokers: AccountWithBalance[]): FormState {
+function initialState(
+  trade: Trade | undefined,
+  side: TradeSide,
+  instruments: Instrument[],
+  pies: Pie[],
+  brokers: AccountWithBalance[],
+  accounts: AccountWithBalance[],
+): FormState {
   if (trade) {
     return {
       side: trade.side,
@@ -55,6 +65,7 @@ function initialState(trade: Trade | undefined, side: TradeSide, instruments: In
       quantity: String(trade.quantity).replace('.', ','),
       amount: centsToInput(trade.amountEur),
       date: trade.date,
+      funding: trade.fundingAccountId == null ? BROKER_CASH : String(trade.fundingAccountId),
     };
   }
   // Οι μετοχές του pie αγοράζονται συνήθως με «Αγορά στο pie», οπότε προτείνουμε πρώτα μια εκτός pie (π.χ. VUSA)
@@ -66,6 +77,7 @@ function initialState(trade: Trade | undefined, side: TradeSide, instruments: In
     quantity: '',
     amount: '',
     date: today(),
+    funding: defaultFunding(accounts),
   };
 }
 
@@ -83,12 +95,12 @@ export function TradeDialog({ open, onOpenChange, trade, defaultSide = 'buy' }: 
   const save = useSaveTrade();
   const remove = useDeleteTrades();
   const brokers = accounts.filter(a => a.type === 'broker' && (!a.archived || a.id === trade?.accountId));
-  const [form, setForm] = useState<FormState>(() => initialState(trade, defaultSide, instruments, pies, brokers));
+  const [form, setForm] = useState<FormState>(() => initialState(trade, defaultSide, instruments, pies, brokers, accounts));
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
-      setForm(initialState(trade, defaultSide, instruments, pies, brokers));
+      setForm(initialState(trade, defaultSide, instruments, pies, brokers, accounts));
       setError(null);
     }
   }, [open, trade]);
@@ -113,6 +125,7 @@ export function TradeDialog({ open, onOpenChange, trade, defaultSide = 'buy' }: 
       amountEur: amount,
       date: form.date,
       pieId: trade?.pieId ?? null,
+      fundingAccountId: form.side === 'buy' ? toFundingAccountId(form.funding) : null,
     };
     save.mutate({ id: trade?.id, input }, { onSuccess: () => onOpenChange(false) });
   }
@@ -187,6 +200,18 @@ export function TradeDialog({ open, onOpenChange, trade, defaultSide = 'buy' }: 
               <AmountInput id="trade-amount" value={form.amount} onChange={e => set('amount', e.target.value)} />
             </Field>
           </div>
+
+          {form.side === 'buy' && (
+            <Field label="Χρήματα από">
+              <FundingSelect
+                accounts={accounts}
+                broker={brokers.find(b => String(b.id) === form.accountId)}
+                value={form.funding}
+                onChange={v => set('funding', v)}
+                amount={amount}
+              />
+            </Field>
+          )}
 
           {unitPrice != null && (
             <p className="text-xs text-muted-foreground">≈ {formatEur(unitPrice)} ανά μετοχή</p>

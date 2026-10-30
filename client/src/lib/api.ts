@@ -11,12 +11,14 @@ import type {
   DebtPaymentInput,
   Instrument,
   InstrumentSearchResult,
-  InvestmentMonth,
   MonthSummary,
+  NetWorthHistory,
   Pie,
   PieInput,
   PiePreviewInput,
   PiePreviewLine,
+  SetupInput,
+  SetupStatus,
   Portfolio,
   ReconcileInput,
   Trade,
@@ -89,17 +91,16 @@ export const usePortfolio = () =>
     refetchInterval: 15 * 60_000,
   });
 
-export const useInvestmentMonth = (month: string, enabled = true) =>
-  useQuery({
-    queryKey: ['portfolio-month', month],
-    queryFn: () => request<InvestmentMonth>('GET', `/api/portfolio/month?month=${month}`),
-    staleTime: 5 * 60_000,
-    enabled,
-  });
-
 /** Πρόταση για αγορά στο pie (δεν αποθηκεύει). */
 export const piePreview = (pieId: number, input: PiePreviewInput) =>
   request<PiePreviewLine[]>('POST', `/api/pies/${pieId}/preview`, input);
+
+// Χρειάζεται τιμές μετοχών για κάθε τέλος μήνα: ο server τις κρατάει στη βάση, οπότε μετά την 1η φορά είναι γρήγορο
+export const useNetWorth = () =>
+  useQuery({ queryKey: ['networth'], queryFn: () => request<NetWorthHistory>('GET', '/api/networth'), staleTime: 5 * 60_000 });
+
+export const useSetupStatus = () =>
+  useQuery({ queryKey: ['setup-status'], queryFn: () => request<SetupStatus>('GET', '/api/setup/status'), staleTime: Infinity });
 
 export const useDebts = () => useQuery({ queryKey: ['debts'], queryFn: () => request<Debt[]>('GET', '/api/debts') });
 
@@ -218,3 +219,29 @@ export const useForgiveDebt = () =>
 export const useDeleteDebtPayment = () =>
   useApiMutation(({ id, transactionId }: { id: number; transactionId: number }) =>
     request<Debt>('DELETE', `/api/debts/${id}/payments/${transactionId}`));
+
+/** Αρχικοποίηση. Η κατάσταση «άδεια» αλλάζει αμέσως, αλλιώς ο οδηγός θα ξανανοίγε μέχρι να έρθει η νέα τιμή. */
+export function useSetup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: SetupInput) => request('POST', '/api/setup', input),
+    onSuccess: () => {
+      queryClient.setQueryData<SetupStatus>(['setup-status'], { empty: false });
+      queryClient.invalidateQueries({ predicate: q => q.queryKey[0] !== 'setup-status' });
+      toast.success('Έτοιμο! Η αφετηρία αποθηκεύτηκε');
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+}
+
+export function useReset() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => request<{ backup: string | null }>('POST', '/api/reset', { confirm: 'ΔΙΑΓΡΑΦΗ' }),
+    onSuccess: () => {
+      queryClient.setQueryData<SetupStatus>(['setup-status'], { empty: true });
+      queryClient.invalidateQueries({ predicate: q => q.queryKey[0] !== 'setup-status' });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+}

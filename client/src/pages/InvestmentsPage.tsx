@@ -113,6 +113,17 @@ export function InvestmentsPage() {
         </p>
       )}
 
+      {/* Αρνητικά μετρητά σε broker: συνήθως αγορά χωρίς τη μεταφορά που την πλήρωσε */}
+      {accounts.filter(a => a.type === 'broker' && a.balance < 0).map(a => (
+        <p key={a.id} className="flex items-start gap-3 rounded-2xl bg-warning/10 px-4 py-3 text-sm text-warning">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <span>
+            Τα μετρητά στο {a.name} είναι {formatEur(a.balance)}: κάποια αγορά δεν έχει από πού πληρώθηκε. Άνοιξέ την
+            στις Κινήσεις και διάλεξε «Χρήματα από» (π.χ. Τράπεζα Πειραιώς), ή κάνε μεταφορά προς το {a.name}.
+          </span>
+        </p>
+      ))}
+
       {!isLoading && trades.length === 0 ? (
         <GettingStarted
           pie={mainPie}
@@ -395,7 +406,10 @@ function DriftBar({ target, actual, max }: { target: number; actual: number | nu
 }
 
 /** Μια γραμμή της λίστας: μία κίνηση ή όλες οι κινήσεις μιας αγοράς στο pie (ίδια μέρα, ίδιο pie, ίδιο είδος). */
-type TradeEntry = { kind: 'single'; trade: Trade } | { kind: 'pie'; key: string; pieId: number; trades: Trade[] };
+type TradeEntry =
+  | { kind: 'single'; trade: Trade }
+  /** `key`: μοναδικό (React, ανάπτυξη) · `match`: pie + είδος + μεταφορά, για να ενωθούν οι κινήσεις μιας αγοράς */
+  | { kind: 'pie'; key: string; match: string; pieId: number; trades: Trade[] };
 
 function groupTrades(trades: Trade[]): Array<[string, TradeEntry[]]> {
   const days = new Map<string, TradeEntry[]>();
@@ -406,10 +420,12 @@ function groupTrades(trades: Trade[]): Array<[string, TradeEntry[]]> {
       entries.push({ kind: 'single', trade: t });
       continue;
     }
-    const key = `${t.date}:${t.pieId}:${t.side}`;
-    const group = entries.find((e): e is Extract<TradeEntry, { kind: 'pie' }> => e.kind === 'pie' && e.key === key);
+    // Μια αγορά στο pie = οι κινήσεις που αποθηκεύτηκαν μαζί (batchId). Για παλιότερες χωρίς batchId:
+    // ίδιο pie, είδος και μεταφορά «Χρήματα από». Έτσι δύο αγορές της ίδιας μέρας μένουν χωριστές γραμμές.
+    const match = t.batchId != null ? `b${t.batchId}` : `${t.pieId}:${t.side}:${t.fundingTransactionId ?? '-'}`;
+    const group = entries.find((e): e is Extract<TradeEntry, { kind: 'pie' }> => e.kind === 'pie' && e.match === match);
     if (group) group.trades.push(t);
-    else entries.push({ kind: 'pie', key, pieId: t.pieId, trades: [t] });
+    else entries.push({ kind: 'pie', key: `${t.date}:${t.id}`, match, pieId: t.pieId, trades: [t] });
   }
   return [...days];
 }
@@ -457,6 +473,7 @@ function TradeList({
           </div>
           <div className="truncate text-xs text-muted-foreground">
             {formatQuantity(t.quantity)} μετ.{!nested && <> · {accountName(t.accountId)}</>}
+            {!nested && t.fundingAccountId != null && <> · από {accountName(t.fundingAccountId)}</>}
           </div>
         </div>
         <TradeAmount side={t.side} cents={t.amountEur} />
@@ -493,6 +510,7 @@ function TradeList({
                         </div>
                         <div className="truncate text-xs text-muted-foreground">
                           {e.trades.length} μετοχές · {accountName(first.accountId)}
+                          {first.fundingAccountId != null && <> · από {accountName(first.fundingAccountId)}</>}
                         </div>
                       </div>
                       <ChevronDown className={cn('size-4 text-muted-foreground transition-transform', open && 'rotate-180')} />

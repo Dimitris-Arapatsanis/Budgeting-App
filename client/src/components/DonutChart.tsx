@@ -47,6 +47,8 @@ interface DonutChartProps {
   /** Γραμμές κάτω από το legend που δεν μπαίνουν στον κύκλο (π.χ. αρνητικά ποσά) */
   extraRows?: DonutRow[];
   emptyText?: string;
+  /** Πρόσημο στην ανάλυση κάτω από κάθε κομμάτι (π.χ. μεταβολές). Όχι για υπόλοιπα. */
+  detailsSigned?: boolean;
 }
 
 export function DonutChart({
@@ -56,6 +58,7 @@ export function DonutChart({
   centerSigned,
   extraRows = [],
   emptyText = 'Δεν υπάρχουν δεδομένα',
+  detailsSigned = true,
 }: DonutChartProps) {
   const slices = limitSlices(data);
   const total = slices.reduce((sum, d) => sum + d.value, 0);
@@ -109,7 +112,7 @@ export function DonutChart({
                       {s.details.map((d, j) => (
                         <li key={j} className="flex justify-between gap-2">
                           <span className="truncate">{d.name}</span>
-                          <Amount cents={d.value} signed />
+                          <Amount cents={d.value} signed={detailsSigned} />
                         </li>
                       ))}
                     </ul>

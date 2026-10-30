@@ -1,11 +1,9 @@
 import {
-  AlertTriangle,
   ArrowDownLeft,
   ArrowLeftRight,
   ArrowUpRight,
   ChartLine,
   HandCoins,
-  PiggyBank,
   Plus,
   Scale,
   Trash2,
@@ -17,7 +15,6 @@ import { Navigate, useParams } from 'react-router';
 import {
   currentMonth,
   formatEur,
-  formatEurSigned,
   formatMonth,
   lastDayOfMonth,
   MONTH_KEY_RE,
@@ -31,6 +28,7 @@ import {
 import { Amount } from '@/components/Amount';
 import { CategoryBadge } from '@/components/CategoryBadge';
 import { DonutChart } from '@/components/DonutChart';
+import { NetWorthChange, NetWorthDonut } from '@/components/NetWorth';
 import { PeriodNav } from '@/components/PeriodNav';
 import { SavingsAllocationChart } from '@/components/SavingsAllocationChart';
 import { StatCard } from '@/components/StatCard';
@@ -41,9 +39,8 @@ import {
   useAccounts,
   useCategories,
   useDeleteTransaction,
-  useInvestmentMonth,
+  useNetWorth,
   useSummary,
-  useTrades,
   useTransactions,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -59,7 +56,9 @@ export function MonthPage() {
 
 function MonthView({ month }: { month: string }) {
   const { data: summary } = useSummary(month);
-  const { data: transactions = [], isLoading } = useTransactions(month);
+  const { data: allTransactions = [], isLoading } = useTransactions(month);
+  // Οι διορθώσεις υπολοίπου δεν φαίνονται (επιλογή χρήστη): διορθώνουν μόνο το υπόλοιπο, δεν είναι κινήσεις
+  const transactions = allTransactions.filter(t => t.type !== 'adjustment');
   const { data: categories = [] } = useCategories();
   const [dialog, setDialog] = useState<{ open: boolean; transaction?: Transaction }>({ open: false });
 
@@ -85,7 +84,7 @@ function MonthView({ month }: { month: string }) {
 
       {summary && <MonthStats summary={summary} />}
       {summary && <StatusMessage summary={summary} />}
-      {summary && <InvestmentStrip month={month} summary={summary} />}
+      <NetWorthCard month={month} />
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
@@ -144,41 +143,38 @@ function MonthStats({ summary: s }: { summary: MonthSummary }) {
         label="Αποταμίευση"
         icon={s.savings < 0 ? TrendingDown : TrendingUp}
         tone={s.savings < 0 ? 'negative' : 'primary'}
-        sub={[rate, s.adjustments !== 0 && `διορθώσεις ${formatEurSigned(s.adjustments)}`].filter(Boolean).join(' · ') || undefined}
+        sub={rate ?? undefined}
       >
         <Amount cents={s.savings} signed colored />
       </StatCard>
-      <StatCard label="Στην άκρη" icon={PiggyBank} tone="neutral" sub="μεταφορές σε αποταμίευση">
-        <Amount cents={s.setAside} />
+      <StatCard label="Σε μετοχές" icon={ChartLine} tone="primary" sub="αγορές του μήνα">
+        <Amount cents={s.invested} />
       </StatCard>
     </div>
   );
 }
 
-/** Αποταμίευση σε μετοχές / σε μετρητά και μεταβολή αξίας μετοχών. Εμφανίζεται μόνο αν υπάρχουν κινήσεις μετοχών. */
-function InvestmentStrip({ month, summary: s }: { month: string; summary: MonthSummary }) {
-  const { data: trades = [] } = useTrades();
-  const hasTrades = trades.some(t => t.date <= lastDayOfMonth(month));
-  const { data: inv } = useInvestmentMonth(month, hasTrades);
-  if (!hasTrades) return null;
+/** Καθαρή περιουσία στο τέλος του μήνα και πώς άλλαξε από τον προηγούμενο. */
+function NetWorthCard({ month }: { month: string }) {
+  const { data } = useNetWorth();
+  if (!data?.since || month > currentMonth()) return null;
+  const m = data.months.find(x => x.month === month);
+  if (!m) {
+    return (
+      <p className="rounded-2xl bg-muted px-4 py-3 text-sm text-muted-foreground">
+        Η καθαρή περιουσία υπολογίζεται από τον πρώτο μήνα με κινήσεις ({formatMonth(data.since)}).
+      </p>
+    );
+  }
+  const isCurrent = month === currentMonth();
   return (
-    <div className="surface grid grid-cols-3 divide-x px-1 py-3 text-sm sm:py-4">
-      <div className="px-3 sm:px-5">
-        <div className="text-xs text-muted-foreground">Σε μετοχές</div>
-        <Amount cents={s.invested} className="font-semibold" />
-      </div>
-      <div className="px-3 sm:px-5">
-        <div className="text-xs text-muted-foreground">Σε μετρητά</div>
-        <Amount cents={s.savedCash} signed className="font-semibold" />
-      </div>
-      <div className="px-3 sm:px-5" title="Άνοδος ή πτώση της αγοράς, χωρίς τις αγορές του μήνα">
-        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-          <ChartLine className="hidden size-3.5 sm:block" /> Αξία μετοχών
-        </div>
-        {inv ? <Amount cents={inv.marketChange} signed colored className="font-semibold" /> : <span className="text-muted-foreground">…</span>}
-        {inv?.incomplete && <span className="ml-1 text-xs text-muted-foreground" title="Λείπει κάποια τιμή">*</span>}
-      </div>
-    </div>
+    <Card>
+      <CardHeader><CardTitle>Καθαρή περιουσία</CardTitle></CardHeader>
+      <CardContent className="grid gap-8 md:grid-cols-2">
+        <NetWorthDonut breakdown={m.end} />
+        <NetWorthChange parts={{ ...m, end: m.end.total }} startLabel={month === data.since ? 'έναρξη' : 'αρχή μήνα'} endLabel={isCurrent ? 'σήμερα' : 'τέλος μήνα'} />
+      </CardContent>
+    </Card>
   );
 }
 
@@ -189,15 +185,6 @@ function StatusMessage({ summary: s }: { summary: MonthSummary }) {
       <p className="flex items-start gap-3 rounded-2xl bg-negative/10 px-4 py-3 text-sm text-negative">
         <TrendingDown className="mt-0.5 size-4 shrink-0" />
         <span>Ξεπέρασες τα έσοδα κατά {formatEur(s.fromSavings)}. Η διαφορά βγήκε από τα μαζεμένα.</span>
-      </p>
-    );
-  }
-  if (s.status === 'below-set-aside') {
-    return (
-      <p className="flex items-start gap-3 rounded-2xl bg-warning/10 px-4 py-3 text-sm text-warning">
-        <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-        <span>Έβαλες στην άκρη {formatEur(s.setAside)}, αλλά τελικά αποταμίευσες {formatEur(s.savings)}.
-        {' '}{formatEur(s.fromSavings)} ήρθαν από τα μαζεμένα.</span>
       </p>
     );
   }
@@ -217,6 +204,8 @@ function TransactionList({
   const remove = useDeleteTransaction();
   const accountName = (id: number | null) => accounts.find(a => a.id === id)?.name ?? '—';
   const debtInfo = (t: Transaction) => debtTransfer(t, accounts);
+  // Χρωστούμενα και μεταφορές για αγορές μετοχών: αλλάζουν μόνο από εκεί που φτιάχτηκαν
+  const locked = (t: Transaction) => t.debtId != null || !!t.tradeFunding;
 
   const byDay = useMemo(() => {
     const groups = new Map<string, Transaction[]>();
@@ -234,12 +223,12 @@ function TransactionList({
               <li key={t.id} className="group flex items-center transition-colors hover:bg-muted/60">
                 <button
                   type="button"
-                  onClick={() => t.type !== 'adjustment' && t.debtId == null && onSelect(t)}
-                  title={t.debtId != null ? 'Αλλάζει από τα Χρωστούμενα, στους Λογαριασμούς' : undefined}
+                  onClick={() => t.type !== 'adjustment' && !locked(t) && onSelect(t)}
+                  title={t.debtId != null ? 'Αλλάζει από τα Χρωστούμενα, στους Λογαριασμούς' : t.tradeFunding ? 'Αλλάζει από την αγορά, στις Επενδύσεις' : undefined}
                   className={cn(
                     'flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 text-left outline-none',
-                    (t.type === 'adjustment' || t.debtId != null) && 'cursor-default',
-                    t.debtId != null && 'pr-4',
+                    (t.type === 'adjustment' || locked(t)) && 'cursor-default',
+                    locked(t) && 'pr-4',
                   )}
                 >
                   <TransactionIcon transaction={t} category={category(t.categoryId)} debt={!!debtInfo(t)} />
@@ -256,7 +245,7 @@ function TransactionList({
                   </div>
                   <TransactionAmount transaction={t} />
                 </button>
-                {t.debtId == null && <Button
+                {!locked(t) && <Button
                   variant="ghost"
                   size="icon-sm"
                   title="Διαγραφή"

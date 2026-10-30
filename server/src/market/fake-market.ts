@@ -13,7 +13,7 @@ for (const t of ['NVDA', 'AMZN', 'AAPL', 'GOOGL', 'AMD', 'INTC', 'META', 'TSLA']
 }
 
 const HISTORY: Record<string, { currency: string; closes: Close[] }> = {
-  'VUSA.AS': { currency: 'EUR', closes: [{ date: '2026-07-31', close: 80 }, { date: '2026-08-14', close: 85 }, { date: '2026-08-31', close: 90 }] },
+  'VUSA.AS': { currency: 'EUR', closes: [{ date: '2026-06-30', close: 75 }, { date: '2026-07-31', close: 80 }, { date: '2026-08-14', close: 85 }, { date: '2026-08-31', close: 90 }, { date: '2026-09-30', close: 95 }] },
   // Το κλείσιμο του Αυγούστου είναι Παρασκευή 28/8: η τιμή της 31/8 βρίσκεται με lookback
   MSFT: { currency: 'USD', closes: [{ date: '2026-07-31', close: 200 }, { date: '2026-08-28', close: 210 }] },
   'EURUSD=X': { currency: 'USD', closes: [{ date: '2026-07-31', close: 1 }, { date: '2026-08-28', close: 1.05 }] },

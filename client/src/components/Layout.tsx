@@ -1,6 +1,7 @@
 import { CalendarDays, CalendarRange, ChartPie, Landmark, Monitor, Moon, Sun, Tags, Wallet } from 'lucide-react';
-import { NavLink, Outlet } from 'react-router';
+import { Navigate, NavLink, Outlet, useLocation } from 'react-router';
 import { Button } from '@/components/ui/button';
+import { useSetupStatus } from '@/lib/api';
 import { useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 
@@ -32,6 +33,13 @@ function ThemeToggle() {
 }
 
 export function Layout() {
+  const { data: setup } = useSetupStatus();
+  const { pathname } = useLocation();
+  const inSetup = pathname === '/setup';
+  // Άδεια εφαρμογή: πρώτα ο οδηγός «Ξεκίνα»
+  if (setup?.empty && !inSetup) return <Navigate to="/setup" replace />;
+  const showNav = !inSetup || setup?.empty === false;
+
   return (
     <div className="min-h-svh">
       <header className="sticky top-0 z-10 bg-background/75 backdrop-blur-lg">
@@ -43,7 +51,7 @@ export function Layout() {
             Budget
           </span>
           {/* Υπολογιστής: pill tabs πάνω. Κινητό: μπάρα κάτω. */}
-          <nav className="hidden rounded-full bg-muted p-1 sm:flex">
+          <nav className={cn('hidden rounded-full bg-muted p-1', showNav && 'sm:flex')}>
             {NAV.map(item => (
               <NavLink
                 key={item.to}
@@ -67,7 +75,7 @@ export function Layout() {
       <main className="mx-auto max-w-5xl px-4 pt-4 pb-28 sm:pb-12">
         <Outlet />
       </main>
-      <nav className="fixed inset-x-0 bottom-0 z-10 border-t bg-background/85 pb-[env(safe-area-inset-bottom)] backdrop-blur-lg sm:hidden">
+      <nav className={cn('fixed inset-x-0 bottom-0 z-10 border-t bg-background/85 pb-[env(safe-area-inset-bottom)] backdrop-blur-lg sm:hidden', !showNav && 'hidden')}>
         <div className="grid grid-cols-5">
           {NAV.map(({ to, label, icon: Icon }) => (
             <NavLink

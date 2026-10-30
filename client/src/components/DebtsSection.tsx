@@ -176,7 +176,7 @@ function DebtRow({
               {d.reason && <span className="font-normal text-muted-foreground"> · {d.reason}</span>}
             </div>
             <div className="truncate text-xs text-muted-foreground">
-              {formatDate(d.date)} · {d.direction === 'lent' ? 'από' : 'σε'} {accountName(d.accountId)}
+              {formatDate(d.date)} · {d.accountId == null ? 'παλιό χρέος' : `${d.direction === 'lent' ? 'από' : 'σε'} ${accountName(d.accountId)}`}
               {isSettled && (forgiven ? ' · χαρίστηκε' : ' · εξοφλήθηκε')}
             </div>
             {!isSettled && d.settled > 0 && (
@@ -203,7 +203,9 @@ function DebtRow({
       {expanded && (
         <ul className="space-y-1 bg-muted/30 px-4 py-2 pl-16 text-xs">
           <li className="flex items-center justify-between gap-2 text-muted-foreground">
-            <span>{formatDate(d.date)} · {TEXT[d.direction].tab} {d.direction === 'lent' ? 'από' : 'σε'} {accountName(d.accountId)}</span>
+            <span>
+              {formatDate(d.date)} · {d.accountId == null ? 'Παλιό χρέος' : `${TEXT[d.direction].tab} ${d.direction === 'lent' ? 'από' : 'σε'} ${accountName(d.accountId)}`}
+            </span>
             <span className="mr-8 tabular-nums">{formatEur(d.amount)}</span>
           </li>
           {d.payments.map(p => (
@@ -253,10 +255,13 @@ function DebtDialog({
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(today());
   const [accountId, setAccountId] = useState('');
+  // Παλιό χρέος: υπήρχε πριν ξεκινήσεις, δεν βγαίνουν/μπαίνουν λεφτά σε κανέναν λογαριασμό
+  const [isOld, setIsOld] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
+    setIsOld(debt ? debt.accountId == null : false);
     setDirection(debt?.direction ?? defaultDirection);
     setPerson(debt?.person ?? '');
     setReason(debt?.reason ?? '');
@@ -272,7 +277,7 @@ function DebtDialog({
     const cents = parseAmount(amount);
     if (cents == null || cents <= 0) return setError('Γράψε ένα θετικό ποσό, π.χ. 50');
     save.mutate(
-      { id: debt?.id, input: { direction, person, reason, amount: cents, date, accountId: Number(accountId) } },
+      { id: debt?.id, input: { direction, person, reason, amount: cents, date, accountId: isOld ? null : Number(accountId) } },
       { onSuccess: onClose },
     );
   }
@@ -310,10 +315,21 @@ function DebtDialog({
               <AmountInput id="debt-amount" value={amount} onChange={e => setAmount(e.target.value)} />
             </Field>
           </div>
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" className="mt-0.5 size-4 accent-primary" checked={isOld} onChange={e => setIsOld(e.target.checked)} />
+            <span>
+              Παλιό χρέος
+              <span className="block text-xs text-muted-foreground">
+                Υπήρχε πριν ξεκινήσεις την εφαρμογή: δεν {direction === 'lent' ? 'βγαίνουν' : 'μπαίνουν'} λεφτά σε κανέναν λογαριασμό.
+              </span>
+            </span>
+          </label>
           <div className="grid grid-cols-2 gap-3">
-            <Field label={t.account}>
-              <AccountSelect accounts={accounts} value={accountId} onChange={setAccountId} />
-            </Field>
+            {!isOld && (
+              <Field label={t.account}>
+                <AccountSelect accounts={accounts} value={accountId} onChange={setAccountId} />
+              </Field>
+            )}
             <Field label="Ημερομηνία" htmlFor="debt-date">
               <Input id="debt-date" type="date" required value={date} onChange={e => setDate(e.target.value)} />
             </Field>
@@ -352,7 +368,7 @@ function PaymentDialog({ debt, accounts, onClose }: { debt?: Debt; accounts: Acc
     setAmount(centsToInput(debt.outstanding));
     setDate(today());
     // Πρόταση: ο λογαριασμός του δανεισμού
-    setAccountId(String(debt.accountId));
+    setAccountId(String(debt.accountId ?? (accounts.find(a => a.type === 'bank') ?? accounts[0])?.id ?? ''));
     const fallback = kindCategories.find(c => c.name === (kind === 'expense' ? 'Άλλα' : 'Άλλα έσοδα')) ?? kindCategories[0];
     setCategoryId(String(fallback?.id ?? ''));
     setError(null);
