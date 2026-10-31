@@ -33,6 +33,7 @@ import { HttpError, notFound } from '../http-error.ts';
 import type { MarketData } from '../market/market-data.ts';
 import type { Prices } from '../market/prices.ts';
 import { openingsValue, valueAt } from '../market/valuation.ts';
+import { recurringLink, usedByRecurring } from './recurring.ts';
 
 const TRADE_COLUMNS = {
   id: trades.id,
@@ -46,6 +47,8 @@ const TRADE_COLUMNS = {
   fundingAccountId: transactions.accountId,
   fundingTransactionId: trades.fundingTransactionId,
   batchId: trades.batchId,
+  recurringId: trades.recurringId,
+  recurringDue: trades.recurringDue,
 };
 
 const selectTrades = (db: Db) =>
@@ -157,7 +160,7 @@ function toTradeRow(db: Db, input: ParsedTradeInput): ParsedTradeInput {
     const account = db.select().from(accounts).where(eq(accounts.id, funding)).get();
     if (!account || isDebtAccount(account)) throw new HttpError(400, 'Ο λογαριασμός «Χρήματα από» δεν υπάρχει');
   }
-  return { ...input, fundingAccountId: funding };
+  return { ...input, fundingAccountId: funding, ...recurringLink(db, input) };
 }
 
 export function investmentRoutes(app: FastifyInstance, db: Db, market: MarketData, prices: Prices) {
@@ -196,6 +199,9 @@ export function investmentRoutes(app: FastifyInstance, db: Db, market: MarketDat
     const { id } = idParamSchema.parse(req.params);
     if (db.select({ id: trades.id }).from(trades).where(eq(trades.instrumentId, id)).limit(1).get()) {
       throw new HttpError(409, 'Η μετοχή έχει κινήσεις και δεν μπορεί να διαγραφεί');
+    }
+    if (usedByRecurring(db, { instrumentId: id })) {
+      throw new HttpError(409, 'Η μετοχή χρησιμοποιείται σε επαναλαμβανόμενη αγορά');
     }
     if (db.select().from(pieSlices).where(eq(pieSlices.instrumentId, id)).limit(1).get()) {
       throw new HttpError(409, 'Η μετοχή είναι σε pie. Βγάλε την πρώτα από το pie.');

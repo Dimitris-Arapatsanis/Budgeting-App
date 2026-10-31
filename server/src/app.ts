@@ -9,6 +9,7 @@ import { categoryRoutes } from './routes/categories.ts';
 import { debtRoutes } from './routes/debts.ts';
 import { investmentRoutes } from './routes/investments.ts';
 import { netWorthRoutes } from './routes/networth.ts';
+import { recurringRoutes } from './routes/recurring.ts';
 import { setupRoutes } from './routes/setup.ts';
 import { transactionRoutes } from './routes/transactions.ts';
 
@@ -42,6 +43,7 @@ export function buildApp(db: Db, { logger = false, market = yahooMarketData(), b
   investmentRoutes(app, db, market, prices);
   netWorthRoutes(app, db, prices);
   setupRoutes(app, db, { backupDir });
+  recurringRoutes(app, db);
 
   return app;
 }

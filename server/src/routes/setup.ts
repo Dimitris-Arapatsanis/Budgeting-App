@@ -13,6 +13,8 @@ import {
   pieSlices,
   pies,
   priceCache,
+  recurring,
+  recurringSkips,
   trades,
   transactions,
 } from '../db/schema.ts';
@@ -23,6 +25,7 @@ import { debtAccount, debtOpeningRow } from './debts.ts';
 /** Καμία κίνηση, κανένα χρωστούμενο και όλα τα υπόλοιπα 0: η εφαρμογή δεν έχει ξεκινήσει ακόμα. */
 function isEmpty(db: Db) {
   return !db.select({ id: transactions.id }).from(transactions).limit(1).get()
+    && !db.select({ id: recurring.id }).from(recurring).limit(1).get()
     && !db.select({ id: trades.id }).from(trades).limit(1).get()
     && !db.select({ id: debts.id }).from(debts).limit(1).get()
     && db.select().from(accounts).all().every(a => a.initialBalance === 0);
@@ -85,7 +88,7 @@ export function setupRoutes(app: FastifyInstance, db: Db, { backupDir }: { backu
     }
     // Σειρά διαγραφής: πρώτα ό,τι δείχνει σε άλλους πίνακες
     db.transaction(tx => {
-      for (const table of [trades, pieSlices, pies, transactions, debts, priceCache, fxCache, instruments, categories, accounts]) {
+      for (const table of [trades, transactions, recurringSkips, recurring, pieSlices, pies, debts, priceCache, fxCache, instruments, categories, accounts]) {
         tx.delete(table).run();
       }
     });

@@ -4,6 +4,7 @@ import { categoryInputSchema, idParamSchema } from '@budget/shared';
 import type { Db } from '../db/index.ts';
 import { categories, transactions } from '../db/schema.ts';
 import { HttpError, notFound } from '../http-error.ts';
+import { usedByRecurring } from './recurring.ts';
 
 const isUniqueViolation = (err: unknown) =>
   err instanceof Error && 'code' in err && err.code === 'SQLITE_CONSTRAINT_UNIQUE';
@@ -46,6 +47,7 @@ export function categoryRoutes(app: FastifyInstance, db: Db) {
     const used = db.select({ id: transactions.id }).from(transactions)
       .where(eq(transactions.categoryId, id)).limit(1).get();
     if (used) throw new HttpError(409, 'Η κατηγορία έχει συναλλαγές και δεν μπορεί να διαγραφεί');
+    if (usedByRecurring(db, { categoryId: id })) throw new HttpError(409, 'Η κατηγορία χρησιμοποιείται σε επαναλαμβανόμενη συναλλαγή');
     const row = db.delete(categories).where(eq(categories.id, id)).returning().get();
     if (!row) throw notFound('Η κατηγορία');
     return reply.code(204).send();

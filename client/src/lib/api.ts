@@ -17,6 +17,9 @@ import type {
   PieInput,
   PiePreviewInput,
   PiePreviewLine,
+  Recurring,
+  RecurringDue,
+  RecurringInput,
   SetupInput,
   SetupStatus,
   Portfolio,
@@ -101,6 +104,12 @@ export const useNetWorth = () =>
 
 export const useSetupStatus = () =>
   useQuery({ queryKey: ['setup-status'], queryFn: () => request<SetupStatus>('GET', '/api/setup/status'), staleTime: Infinity });
+
+export const useRecurring = () =>
+  useQuery({ queryKey: ['recurring'], queryFn: () => request<Recurring[]>('GET', '/api/recurring') });
+
+export const useRecurringDue = (month: string) =>
+  useQuery({ queryKey: ['recurring-due', month], queryFn: () => request<RecurringDue[]>('GET', `/api/recurring/due?month=${month}`) });
 
 export const useDebts = () => useQuery({ queryKey: ['debts'], queryFn: () => request<Debt[]>('GET', '/api/debts') });
 
@@ -241,6 +250,35 @@ export function useReset() {
     onSuccess: () => {
       queryClient.setQueryData<SetupStatus>(['setup-status'], { empty: true });
       queryClient.invalidateQueries({ predicate: q => q.queryKey[0] !== 'setup-status' });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+}
+
+export const useSaveRecurring = () =>
+  useApiMutation(({ id, input }: { id?: number; input: RecurringInput }) =>
+    id ? request<Recurring>('PUT', `/api/recurring/${id}`, input) : request<Recurring>('POST', '/api/recurring', input));
+
+export const useDeleteRecurring = () =>
+  useApiMutation((id: number) => request('DELETE', `/api/recurring/${id}`), 'Η επανάληψη διαγράφηκε');
+
+/** «Όχι αυτόν τον μήνα», με «Αναίρεση» στο toast. */
+export function useSkipRecurring() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (due: RecurringDue) => request('POST', `/api/recurring/${due.recurring.id}/skip`, { dueDate: due.dueDate }),
+    onSuccess: (_result, due) => {
+      queryClient.invalidateQueries({ queryKey: ['recurring-due'] });
+      toast.success('Παραλείφθηκε για αυτόν τον μήνα', {
+        action: {
+          label: 'Αναίρεση',
+          onClick: () => {
+            request('DELETE', `/api/recurring/${due.recurring.id}/skip/${due.dueDate}`)
+              .then(() => queryClient.invalidateQueries({ queryKey: ['recurring-due'] }))
+              .catch((err: Error) => toast.error(err.message));
+          },
+        },
+      });
     },
     onError: (err: Error) => toast.error(err.message),
   });

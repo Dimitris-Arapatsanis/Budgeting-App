@@ -1,6 +1,16 @@
 import { sql } from 'drizzle-orm';
 import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
-import { ALL_ACCOUNT_TYPES, CATEGORY_COLORS, CATEGORY_ICONS, CATEGORY_KINDS, DEBT_DIRECTIONS, TRADE_SIDES, TRANSACTION_TYPES } from '@budget/shared';
+import {
+  ALL_ACCOUNT_TYPES,
+  CATEGORY_COLORS,
+  CATEGORY_ICONS,
+  CATEGORY_KINDS,
+  DEBT_DIRECTIONS,
+  RECURRING_FREQUENCIES,
+  RECURRING_KINDS,
+  TRADE_SIDES,
+  TRANSACTION_TYPES,
+} from '@budget/shared';
 
 export const accounts = sqliteTable('accounts', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -33,6 +43,36 @@ export const debts = sqliteTable('debts', {
   createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+/** Κανόνες επανάληψης (βλ. recurringInputSchema). Οι λήξεις τους υπολογίζονται, δεν αποθηκεύονται. */
+export const recurring = sqliteTable('recurring', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  kind: text('kind', { enum: RECURRING_KINDS }).notNull(),
+  description: text('description').notNull().default(''),
+  amount: integer('amount').notNull(),
+  accountId: integer('account_id').notNull().references(() => accounts.id),
+  toAccountId: integer('to_account_id').references(() => accounts.id),
+  categoryId: integer('category_id').references(() => categories.id),
+  instrumentId: integer('instrument_id').references(() => instruments.id),
+  pieId: integer('pie_id').references(() => pies.id),
+  fundingAccountId: integer('funding_account_id').references(() => accounts.id),
+  frequency: text('frequency', { enum: RECURRING_FREQUENCIES }).notNull(),
+  day: integer('day').notNull(),
+  month: integer('month'),
+  startDate: text('start_date').notNull(),
+  endDate: text('end_date'),
+  active: integer('active', { mode: 'boolean' }).notNull().default(true),
+});
+
+/** Λήξεις που ο χρήστης προσπέρασε («όχι αυτόν τον μήνα») */
+export const recurringSkips = sqliteTable(
+  'recurring_skips',
+  {
+    recurringId: integer('recurring_id').notNull().references(() => recurring.id, { onDelete: 'cascade' }),
+    dueDate: text('due_date').notNull(),
+  },
+  t => [primaryKey({ columns: [t.recurringId, t.dueDate] })],
+);
+
 export const transactions = sqliteTable(
   'transactions',
   {
@@ -45,6 +85,9 @@ export const transactions = sqliteTable(
     categoryId: integer('category_id').references(() => categories.id),
     description: text('description').notNull().default(''),
     debtId: integer('debt_id').references(() => debts.id, { onDelete: 'cascade' }),
+    /** Κανόνας επανάληψης και λήξη του που καλύπτει αυτή η καταχώριση */
+    recurringId: integer('recurring_id').references(() => recurring.id),
+    recurringDue: text('recurring_due'),
     createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   t => [index('transactions_date_idx').on(t.date)],
@@ -88,6 +131,8 @@ export const trades = sqliteTable(
     fundingTransactionId: integer('funding_transaction_id').references(() => transactions.id),
     /** Κινήσεις που αποθηκεύτηκαν μαζί (μια αγορά στο pie) έχουν το ίδιο batchId: το id της πρώτης */
     batchId: integer('batch_id'),
+    recurringId: integer('recurring_id').references(() => recurring.id),
+    recurringDue: text('recurring_due'),
     createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   t => [index('trades_date_idx').on(t.date)],

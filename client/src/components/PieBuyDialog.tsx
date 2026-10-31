@@ -14,7 +14,7 @@ import {
 } from '@budget/shared';
 import { AmountInput } from '@/components/AmountInput';
 import { Field } from '@/components/Field';
-import { defaultFunding, FundingSelect, toFundingAccountId } from '@/components/FundingSelect';
+import { BROKER_CASH, defaultFunding, FundingSelect, toFundingAccountId } from '@/components/FundingSelect';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -37,13 +37,23 @@ interface Row {
   price: PricePoint | null;
 }
 
+/** Αγορά στο pie συμπληρωμένη από κανόνα επανάληψης */
+export interface PieBuyTemplate {
+  amount: number;
+  date: string;
+  fundingAccountId: number | null;
+  recurringId: number;
+  recurringDue: string;
+}
+
 interface PieBuyDialogProps {
   pie?: Pie;
   mode: PieDialogMode;
+  template?: PieBuyTemplate;
   onClose: () => void;
 }
 
-export function PieBuyDialog({ pie, mode, onClose }: PieBuyDialogProps) {
+export function PieBuyDialog({ pie, mode, template, onClose }: PieBuyDialogProps) {
   const { data: instruments = [] } = useInstruments();
   const { data: accounts = [] } = useAccounts();
   const saveBatch = useSaveTradeBatch();
@@ -58,15 +68,15 @@ export function PieBuyDialog({ pie, mode, onClose }: PieBuyDialogProps) {
 
   useEffect(() => {
     if (!pie) return;
-    setAmount('');
-    setDate(today());
-    setFunding(defaultFunding(accounts));
+    setAmount(template ? centsToInput(template.amount) : '');
+    setDate(template?.date ?? today());
+    setFunding(template ? (template.fundingAccountId == null ? BROKER_CASH : String(template.fundingAccountId)) : defaultFunding(accounts));
     setError(null);
     // Για αρχικές θέσεις δεν χρειάζεται πρόταση: ο χρήστης συμπληρώνει ό,τι έχει
     setRows(mode === 'opening'
       ? pie.slices.map(s => ({ ...s, percent: '', amount: '', quantity: '', price: null }))
       : null);
-  }, [pie, mode]);
+  }, [pie, mode, template]);
 
   const instrumentName = (id: number) => instruments.find(i => i.id === id)?.name ?? '—';
   const setRow = (i: number, patch: Partial<Row>) => setRows(r => r && r.map((row, j) => (j === i ? { ...row, ...patch } : row)));
@@ -131,6 +141,8 @@ export function PieBuyDialog({ pie, mode, onClose }: PieBuyDialogProps) {
       trades.push({
         date, accountId: pie.accountId, instrumentId: row.instrumentId, side: mode, quantity, amountEur, pieId: pie.id,
         fundingAccountId: mode === 'buy' ? toFundingAccountId(funding) : null,
+        recurringId: template?.recurringId ?? null,
+        recurringDue: template?.recurringDue ?? null,
       });
     }
     if (trades.length === 0) return setError('Συμπλήρωσε τουλάχιστον μία μετοχή');

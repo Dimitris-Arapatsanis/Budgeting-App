@@ -96,10 +96,17 @@ export type TransactionType = (typeof TRANSACTION_TYPES)[number];
 
 const id = z.number().int().positive();
 const positiveAmount = z.number().int().positive('Το ποσό πρέπει να είναι θετικό');
+/** Σύνδεση με κανόνα επανάληψης: ποιος κανόνας και ποια λήξη του (YYYY-MM-DD) καλύπτει η καταχώριση */
+const recurringLink = {
+  recurringId: z.number().int().positive().nullable().default(null),
+  recurringDue: z.string().regex(ISO_DATE_RE).nullable().default(null),
+};
+
 const common = {
   date: z.string().regex(ISO_DATE_RE, 'Μη έγκυρη ημερομηνία'),
   accountId: id,
   description: z.string().trim().max(200).default(''),
+  ...recurringLink,
 };
 
 export const transactionInputSchema = z
@@ -130,6 +137,9 @@ export interface Transaction {
   debtId?: number | null;
   /** Μεταφορά που φτιάχτηκε αυτόματα για αγορά μετοχών («Χρήματα από») */
   tradeFunding?: boolean;
+  /** Ο κανόνας επανάληψης και η λήξη του που καλύπτει αυτή η συναλλαγή */
+  recurringId?: number | null;
+  recurringDue?: string | null;
 }
 
 // ---------- Επενδύσεις ----------
@@ -180,6 +190,7 @@ export const tradeInputSchema = z.object({
    * μεταφορά προς τον broker. null = από τα μετρητά που έχει ήδη ο broker.
    */
   fundingAccountId: id.nullable().default(null),
+  ...recurringLink,
 });
 export type TradeInput = z.input<typeof tradeInputSchema>;
 export type ParsedTradeInput = z.output<typeof tradeInputSchema>;
@@ -201,6 +212,8 @@ export interface Trade {
   fundingTransactionId: number | null;
   /** Ίδιο για όλες τις κινήσεις που αποθηκεύτηκαν μαζί (μια αγορά στο pie) */
   batchId: number | null;
+  recurringId?: number | null;
+  recurringDue?: string | null;
 }
 
 export const pieInputSchema = z.object({
@@ -353,6 +366,78 @@ export interface Debt {
   outstanding: number;
   payments: DebtPayment[];
 }
+
+// ---------- Επαναλαμβανόμενες ----------
+
+/** Τι επαναλαμβάνεται: συναλλαγή (έσοδο/έξοδο/μεταφορά), αγορά μετοχής ή αγορά στο pie */
+export const RECURRING_KINDS = ['expense', 'income', 'transfer', 'buy', 'pie'] as const;
+export type RecurringKind = (typeof RECURRING_KINDS)[number];
+
+export const RECURRING_KIND_LABELS: Record<RecurringKind, string> = {
+  expense: 'Έξοδο',
+  income: 'Έσοδο',
+  transfer: 'Μεταφορά',
+  buy: 'Μετοχή',
+  pie: 'Pie',
+};
+
+export const RECURRING_FREQUENCIES = ['monthly', 'yearly'] as const;
+export type RecurringFrequency = (typeof RECURRING_FREQUENCIES)[number];
+
+const optionalId = id.nullable().default(null);
+
+/**
+ * Κανόνας επανάληψης. Δεν καταχωρεί τίποτα μόνος του: κάθε λήξη εμφανίζεται στα «Αναμένονται» του μήνα
+ * και ο χρήστης την καταχωρεί (με το ποσό που πραγματικά έγινε) ή την προσπερνάει.
+ */
+export const recurringInputSchema = z
+  .object({
+    kind: z.enum(RECURRING_KINDS),
+    description: z.string().trim().max(200).default(''),
+    /** Αναμενόμενο ποσό (cents). Ο χρήστης το αλλάζει στην καταχώριση αν διαφέρει. */
+    amount: positiveAmount,
+    /** Λογαριασμός συναλλαγής ή broker της μετοχής / του pie */
+    accountId: id,
+    toAccountId: optionalId,
+    categoryId: optionalId,
+    instrumentId: optionalId,
+    pieId: optionalId,
+    /** Για αγορές: από ποιον λογαριασμό έρχονται τα λεφτά (null = μετρητά του broker) */
+    fundingAccountId: optionalId,
+    frequency: z.enum(RECURRING_FREQUENCIES),
+    /** Ημέρα του μήνα (31 = τελευταία μέρα σε μικρότερους μήνες) */
+    day: z.number().int().min(1).max(31),
+    /** Μήνας (1-12), μόνο για ετήσια */
+    month: z.number().int().min(1).max(12).nullable().default(null),
+    startDate: z.string().regex(ISO_DATE_RE, 'Μη έγκυρη ημερομηνία'),
+    endDate: z.string().regex(ISO_DATE_RE).nullable().default(null),
+    active: z.boolean().default(true),
+  })
+  .superRefine((r, ctx) => {
+    const need = (field: 'toAccountId' | 'categoryId' | 'instrumentId' | 'pieId', message: string) => {
+      if (r[field] == null) ctx.addIssue({ code: 'custom', path: [field], message });
+    };
+    if (r.kind === 'income' || r.kind === 'expense') need('categoryId', 'Διάλεξε κατηγορία');
+    if (r.kind === 'transfer') need('toAccountId', 'Διάλεξε λογαριασμό προορισμού');
+    if (r.kind === 'buy') need('instrumentId', 'Διάλεξε μετοχή');
+    if (r.kind === 'pie') need('pieId', 'Διάλεξε pie');
+    if (r.frequency === 'yearly' && r.month == null) ctx.addIssue({ code: 'custom', path: ['month'], message: 'Διάλεξε μήνα' });
+    if (r.endDate && r.endDate < r.startDate) ctx.addIssue({ code: 'custom', path: ['endDate'], message: 'Η λήξη είναι πριν την έναρξη' });
+  });
+export type RecurringInput = z.input<typeof recurringInputSchema>;
+export type ParsedRecurringInput = z.output<typeof recurringInputSchema>;
+
+export interface Recurring extends ParsedRecurringInput {
+  id: number;
+}
+
+/** Μια λήξη που δεν έχει καταχωριστεί ούτε προσπεραστεί ακόμα. */
+export interface RecurringDue {
+  recurring: Recurring;
+  dueDate: string;
+}
+
+export const recurringSkipSchema = z.object({ dueDate: z.string().regex(ISO_DATE_RE, 'Μη έγκυρη ημερομηνία') });
 
 // ---------- Αρχικοποίηση ----------
 

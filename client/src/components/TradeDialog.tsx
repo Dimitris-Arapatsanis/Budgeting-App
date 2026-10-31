@@ -49,6 +49,17 @@ function defaultAccount(instrumentId: number | undefined, pies: Pie[], brokers: 
   return String(pie?.accountId ?? brokers[0]?.id ?? '');
 }
 
+/** Νέα αγορά συμπληρωμένη από κανόνα επανάληψης. Την ποσότητα τη γράφει ο χρήστης, όπως στον broker. */
+export interface TradeTemplate {
+  instrumentId: number;
+  accountId: number;
+  amount: number;
+  fundingAccountId: number | null;
+  date: string;
+  recurringId: number;
+  recurringDue: string;
+}
+
 function initialState(
   trade: Trade | undefined,
   side: TradeSide,
@@ -56,7 +67,19 @@ function initialState(
   pies: Pie[],
   brokers: AccountWithBalance[],
   accounts: AccountWithBalance[],
+  template?: TradeTemplate,
 ): FormState {
+  if (template) {
+    return {
+      side: 'buy',
+      instrumentId: String(template.instrumentId),
+      accountId: String(template.accountId),
+      quantity: '',
+      amount: centsToInput(template.amount),
+      date: template.date,
+      funding: template.fundingAccountId == null ? BROKER_CASH : String(template.fundingAccountId),
+    };
+  }
   if (trade) {
     return {
       side: trade.side,
@@ -85,25 +108,27 @@ interface TradeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   trade?: Trade;
+  /** Νέα αγορά από κανόνα επανάληψης */
+  template?: TradeTemplate;
   defaultSide?: TradeSide;
 }
 
-export function TradeDialog({ open, onOpenChange, trade, defaultSide = 'buy' }: TradeDialogProps) {
+export function TradeDialog({ open, onOpenChange, trade, template, defaultSide = 'buy' }: TradeDialogProps) {
   const { data: accounts = [] } = useAccounts();
   const { data: instruments = [] } = useInstruments();
   const { data: pies = [] } = usePies();
   const save = useSaveTrade();
   const remove = useDeleteTrades();
   const brokers = accounts.filter(a => a.type === 'broker' && (!a.archived || a.id === trade?.accountId));
-  const [form, setForm] = useState<FormState>(() => initialState(trade, defaultSide, instruments, pies, brokers, accounts));
+  const [form, setForm] = useState<FormState>(() => initialState(trade, defaultSide, instruments, pies, brokers, accounts, template));
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
-      setForm(initialState(trade, defaultSide, instruments, pies, brokers, accounts));
+      setForm(initialState(trade, defaultSide, instruments, pies, brokers, accounts, template));
       setError(null);
     }
-  }, [open, trade]);
+  }, [open, trade, template]);
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm(f => ({ ...f, [key]: value }));
   const changeInstrument = (instrumentId: string) =>
@@ -126,6 +151,9 @@ export function TradeDialog({ open, onOpenChange, trade, defaultSide = 'buy' }: 
       date: form.date,
       pieId: trade?.pieId ?? null,
       fundingAccountId: form.side === 'buy' ? toFundingAccountId(form.funding) : null,
+      // Η σύνδεση με τον κανόνα επανάληψης μένει και στην επεξεργασία
+      recurringId: trade?.recurringId ?? template?.recurringId ?? null,
+      recurringDue: trade?.recurringDue ?? template?.recurringDue ?? null,
     };
     save.mutate({ id: trade?.id, input }, { onSuccess: () => onOpenChange(false) });
   }

@@ -22,6 +22,8 @@ import {
   today,
   type AccountWithBalance,
   type Category,
+  type Pie,
+  type RecurringDue,
   type MonthSummary,
   type Transaction,
 } from '@budget/shared';
@@ -32,7 +34,10 @@ import { NetWorthChange, NetWorthDonut } from '@/components/NetWorth';
 import { PeriodNav } from '@/components/PeriodNav';
 import { SavingsAllocationChart } from '@/components/SavingsAllocationChart';
 import { StatCard } from '@/components/StatCard';
-import { TransactionDialog } from '@/components/TransactionDialog';
+import { PieBuyDialog, type PieBuyTemplate } from '@/components/PieBuyDialog';
+import { RecurringDueSection } from '@/components/Recurring';
+import { TradeDialog, type TradeTemplate } from '@/components/TradeDialog';
+import { TransactionDialog, type TransactionTemplate } from '@/components/TransactionDialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -40,6 +45,7 @@ import {
   useCategories,
   useDeleteTransaction,
   useNetWorth,
+  usePies,
   useSummary,
   useTransactions,
 } from '@/lib/api';
@@ -60,7 +66,29 @@ function MonthView({ month }: { month: string }) {
   // Οι διορθώσεις υπολοίπου δεν φαίνονται (επιλογή χρήστη): διορθώνουν μόνο το υπόλοιπο, δεν είναι κινήσεις
   const transactions = allTransactions.filter(t => t.type !== 'adjustment');
   const { data: categories = [] } = useCategories();
-  const [dialog, setDialog] = useState<{ open: boolean; transaction?: Transaction }>({ open: false });
+  const [dialog, setDialog] = useState<{ open: boolean; transaction?: Transaction; template?: TransactionTemplate }>({ open: false });
+  // Καταχώριση από τα «Αναμένονται»: αγορά μετοχής ή αγορά στο pie
+  const [tradeTemplate, setTradeTemplate] = useState<TradeTemplate>();
+  const [pieBuy, setPieBuy] = useState<{ pie: Pie; template: PieBuyTemplate }>();
+  const { data: pies = [] } = usePies();
+
+  function recordDue({ recurring: r, dueDate }: RecurringDue) {
+    const link = { recurringId: r.id, recurringDue: dueDate };
+    if (r.kind === 'buy') {
+      setTradeTemplate({ instrumentId: r.instrumentId!, accountId: r.accountId, amount: r.amount, fundingAccountId: r.fundingAccountId, date: dueDate, ...link });
+    } else if (r.kind === 'pie') {
+      const pie = pies.find(p => p.id === r.pieId);
+      if (pie) setPieBuy({ pie, template: { amount: r.amount, date: dueDate, fundingAccountId: r.fundingAccountId, ...link } });
+    } else {
+      setDialog({
+        open: true,
+        template: {
+          type: r.kind, amount: r.amount, date: dueDate, accountId: r.accountId, toAccountId: r.toAccountId,
+          categoryId: r.categoryId, description: r.description, ...link,
+        },
+      });
+    }
+  }
 
   const category = (id: number | null) => categories.find(c => c.id === id);
   const categoryName = (id: number | null) => category(id)?.name ?? '—';
@@ -103,6 +131,8 @@ function MonthView({ month }: { month: string }) {
         </Card>
       </div>
 
+      <RecurringDueSection month={month} onRecord={recordDue} />
+
       <section className="pt-2">
         <h2 className="mb-3 text-lg font-bold tracking-tight">Συναλλαγές</h2>
         {!isLoading && transactions.length === 0 ? (
@@ -127,8 +157,11 @@ function MonthView({ month }: { month: string }) {
         open={dialog.open}
         onOpenChange={open => setDialog(d => ({ ...d, open }))}
         transaction={dialog.transaction}
+        template={dialog.template}
         defaultDate={defaultDate}
       />
+      <TradeDialog open={!!tradeTemplate} onOpenChange={open => !open && setTradeTemplate(undefined)} template={tradeTemplate} />
+      <PieBuyDialog pie={pieBuy?.pie} mode="buy" template={pieBuy?.template} onClose={() => setPieBuy(undefined)} />
     </div>
   );
 }

@@ -14,6 +14,7 @@ import {
 import type { Db } from '../db/index.ts';
 import { accounts, categories, trades, transactions } from '../db/schema.ts';
 import { HttpError, notFound } from '../http-error.ts';
+import { recurringLink } from './recurring.ts';
 import { listTrades } from './investments.ts';
 
 /** Οι μεταφορές που φτιάχτηκαν αυτόματα για αγορές μετοχών («Χρήματα από»). */
@@ -34,6 +35,8 @@ function periodTransactions(db: Db, period: string): Transaction[] {
     categoryId: transactions.categoryId,
     description: transactions.description,
     debtId: transactions.debtId,
+    recurringId: transactions.recurringId,
+    recurringDue: transactions.recurringDue,
   })
     .from(transactions)
     .where(like(transactions.date, `${period}-%`))
@@ -59,6 +62,7 @@ function toRow(db: Db, input: ParsedTransactionInput) {
     description: input.description,
     toAccountId: null as number | null,
     categoryId: null as number | null,
+    ...recurringLink(db, input),
   };
 
   if (input.type === 'income' || input.type === 'expense') {

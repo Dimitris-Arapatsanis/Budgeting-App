@@ -2,6 +2,7 @@ import { Check, Pencil, Trash2, X } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { CATEGORY_COLORS, type Category, type CategoryKind } from '@budget/shared';
 import { CategoryBadge, CategoryStylePicker } from '@/components/CategoryBadge';
+import { RecurringSection } from '@/components/Recurring';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -17,7 +18,7 @@ export function CategoriesPage() {
   return (
     <div className="space-y-6">
       <div>
-        <div className="text-xs font-medium text-muted-foreground">Για έσοδα και έξοδα</div>
+        <div className="text-xs font-medium text-muted-foreground">Για έσοδα, έξοδα και επαναλαμβανόμενες</div>
         <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Κατηγορίες</h1>
       </div>
       <div className="grid gap-4 md:grid-cols-2">
@@ -25,6 +26,7 @@ export function CategoriesPage() {
           <CategorySection key={s.kind} kind={s.kind} title={s.title} categories={categories.filter(c => c.kind === s.kind)} />
         ))}
       </div>
+      <RecurringSection />
     </div>
   );
 }
