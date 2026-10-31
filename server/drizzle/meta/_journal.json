@@ -57,6 +57,13 @@
       "when": 1793440678814,
       "tag": "0007_recurring",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1793444703982,
+      "tag": "0008_auth",
+      "breakpoints": true
     }
   ]
 }

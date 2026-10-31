@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, Pencil, Plus, RotateCcw, Scale, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, KeyRound, Pencil, Plus, RotateCcw, Scale, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
@@ -25,7 +25,16 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ACCOUNT_ICON } from '@/lib/account-style';
-import { useAccounts, useDeleteAccount, useNetWorth, useReconcileAccount, useReset, useSaveAccount } from '@/lib/api';
+import {
+  useAccounts,
+  useAuthStatus,
+  useChangePassword,
+  useDeleteAccount,
+  useNetWorth,
+  useReconcileAccount,
+  useReset,
+  useSaveAccount,
+} from '@/lib/api';
 import { toast } from 'sonner';
 
 type DialogState =
@@ -132,6 +141,7 @@ export function AccountsPage() {
         </section>
       )}
 
+      <ChangePasswordSection />
       <ResetSection />
 
       <AccountDialog open={dialog.kind === 'edit'} account={dialog.kind === 'edit' ? dialog.account : undefined} onClose={close} />
@@ -353,6 +363,58 @@ function ResetSection() {
             </Field>
             <DialogFooter>
               <Button type="submit" variant="destructive" disabled={text !== 'ΔΙΑΓΡΑΦΗ' || reset.isPending}>Διαγραφή όλων</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </section>
+  );
+}
+
+function ChangePasswordSection() {
+  const { data: auth } = useAuthStatus();
+  const change = useChangePassword();
+  const [open, setOpen] = useState(false);
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setCurrent('');
+    setNext('');
+    setError(null);
+  }, [open]);
+
+  if (!auth?.enabled) return null;
+
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (next.length < 6) return setError('Ο νέος κωδικός θέλει τουλάχιστον 6 χαρακτήρες');
+    change.mutate({ current, next }, { onSuccess: () => setOpen(false) });
+  }
+
+  return (
+    <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed px-4 py-3 text-sm">
+      <span className="text-muted-foreground">Κωδικός της εφαρμογής. Με την αλλαγή αποσυνδέονται οι άλλες συσκευές.</span>
+      <Button variant="ghost" size="sm" className="rounded-full" onClick={() => setOpen(true)}>
+        <KeyRound className="size-4" /> Αλλαγή κωδικού
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Αλλαγή κωδικού</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSubmit} className="grid gap-4">
+            <Field label="Τρέχων κωδικός" htmlFor="pw-current">
+              <Input id="pw-current" type="password" autoComplete="current-password" value={current} onChange={e => setCurrent(e.target.value)} />
+            </Field>
+            <Field label="Νέος κωδικός" htmlFor="pw-next">
+              <Input id="pw-next" type="password" autoComplete="new-password" value={next} onChange={e => setNext(e.target.value)} />
+            </Field>
+            {error && <p className="text-sm text-negative">{error}</p>}
+            <DialogFooter>
+              <Button type="submit" disabled={change.isPending || !current || !next}>Αλλαγή</Button>
             </DialogFooter>
           </form>
         </DialogContent>

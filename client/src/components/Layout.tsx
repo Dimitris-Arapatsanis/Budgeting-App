@@ -1,7 +1,7 @@
-import { CalendarDays, CalendarRange, ChartPie, Landmark, Monitor, Moon, Sun, Tags, Wallet } from 'lucide-react';
+import { CalendarDays, CalendarRange, ChartPie, Landmark, LogOut, Monitor, Moon, Sun, Tags, Wallet } from 'lucide-react';
 import { Navigate, NavLink, Outlet, useLocation } from 'react-router';
 import { Button } from '@/components/ui/button';
-import { useSetupStatus } from '@/lib/api';
+import { useAuthStatus, useLogout, useSetupStatus } from '@/lib/api';
 import { useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 
@@ -28,6 +28,17 @@ function ThemeToggle() {
   return (
     <Button variant="ghost" size="icon" className="rounded-full" title={current.label} onClick={() => setTheme(next.value)}>
       <Icon className="size-4" />
+    </Button>
+  );
+}
+
+function LogoutButton() {
+  const { data: auth } = useAuthStatus();
+  const logout = useLogout();
+  if (!auth?.enabled) return null;
+  return (
+    <Button variant="ghost" size="icon" className="rounded-full" title="Αποσύνδεση" disabled={logout.isPending} onClick={() => logout.mutate()}>
+      <LogOut className="size-4" />
     </Button>
   );
 }
@@ -67,8 +78,9 @@ export function Layout() {
               </NavLink>
             ))}
           </nav>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center">
             <ThemeToggle />
+            <LogoutButton />
           </div>
         </div>
       </header>

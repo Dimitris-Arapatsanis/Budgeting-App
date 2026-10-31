@@ -130,9 +130,11 @@ shared/   Κοινοί TypeScript τύποι και validation schemas (zod) γ�
 | `npm run build` | Production build του client |
 | `npm run db:generate` | Νέο Drizzle migration μετά από αλλαγή στο `server/src/db/schema.ts` |
 
-Env vars του server: `PORT` (3001), `DB_FILE` (`server/data/budget.db`), `LOG_LEVEL` (`warn`). Του client (Vite): `API_PORT` (3001), για proxy σε άλλο server.
+Env vars του server: `PORT` (3001), `HOST` (`127.0.0.1`, το κινητό έρχεται μέσω `tailscale serve`), `DB_FILE` (`server/data/budget.db`), `LOG_LEVEL` (`warn`), `AUTH` (`off` = χωρίς κωδικό, **μόνο** για δοκιμές). Του client (Vite): `API_PORT` (3001), για proxy σε άλλο server.
 
-**Δοκιμές στο UI:** τρέχε με `DB_FILE=<scratchpad>/test.db npm run dev`, για να μη γεμίσει η πραγματική βάση του χρήστη με δοκιμαστικά δεδομένα. Αν οι θύρες είναι πιασμένες: `PORT=3011 DB_FILE=… npx tsx src/index.ts` στο `server/` και `API_PORT=3011 npx vite --port 5181` στο `client/`.
+`npm run serve` (ή `start-budget.cmd`) = build του client + server, που σερβίρει και την εφαρμογή στο `:3001` (κανονική χρήση).
+
+**Δοκιμές στο UI:** τρέχε με `AUTH=off DB_FILE=<scratchpad>/test.db npm run dev`, για να μη γεμίσει η πραγματική βάση του χρήστη με δοκιμαστικά δεδομένα. Αν οι θύρες είναι πιασμένες: `PORT=3011 DB_FILE=… npx tsx src/index.ts` στο `server/` και `API_PORT=3011 npx vite --port 5181` στο `client/`.
 
 ## Σημειώσεις υλοποίησης
 
@@ -142,7 +144,12 @@ Env vars του server: `PORT` (3001), `DB_FILE` (`server/data/budget.db`), `LOG
 - Τα σφάλματα του API είναι `{ error: "<ελληνικό μήνυμα>" }`. Ο client τα δείχνει σε toast (sonner).
 - Θέμα light/dark/system: δικός μας `ThemeProvider` (`client/src/lib/theme.tsx`) και inline script στο `index.html` για να μην αναβοσβήνει. **Όχι** `next-themes` (βγάζει warning στο React 19).
 - shadcn components: `npx shadcn@latest add <name>` από τον φάκελο `client/`. Μετά έλεγξε ότι το `cn` γίνεται import από `@/lib/utils`.
-- Το PWA (vite-plugin-pwa) μπαίνει στη Φάση 6.
+- **Φάση 6 (κινητό):**
+  - **Σύνδεση** (`server/src/routes/auth.ts`): ένας χρήστης, κωδικός με scrypt στο `settings`, συνεδρία = τυχαίο token σε httpOnly cookie (`budget_session`, 90 μέρες), στη βάση μόνο το sha256 του (`sessions`). Hook `onRequest`: κάθε `/api/*` εκτός `/api/auth/*` θέλει συνεδρία (401). 5 λάθος κωδικοί / 15' ανά IP → 429. Αλλαγή κωδικού σβήνει όλες τις συνεδρίες. `buildApp(db, { auth })`: ενεργό στον πραγματικό server, ανενεργό στα tests. Client: `AuthGate` (ορισμός κωδικού / σύνδεση), κάθε 401 στέλνει `UNAUTHORIZED_EVENT`. Η αποσύνδεση σβήνει όλα τα queries από τη μνήμη.
+  - **Static:** αν υπάρχει `client/dist`, ο server σερβίρει την εφαρμογή (`@fastify/static`) και κάθε άγνωστο GET εκτός `/api` δίνει `index.html` (SPA). `trustProxy` για το `X-Forwarded-Proto` του `tailscale serve` (secure cookie σε https).
+  - **PWA** (`vite-plugin-pwa`, `generateSW`): manifest, εικονίδια στο `client/public` (`icon.svg` → PNG), ο service worker κρατάει μόνο την εφαρμογή, **ποτέ** `/api` (μόνο online, επιλογή χρήστη).
+  - **Backup:** `startDailyBackups` (`server/src/backup.ts`): `VACUUM INTO` `daily-YYYY-MM-DD.db` στο `server/data/backups`, κρατάει 30.
+  - **Φιλοξενία:** ο υπολογιστής του χρήστη + Tailscale (`tailscale serve --bg 3001` → https στο tailnet), επιλογή χρήστη. Το `start-budget.cmd` τρέχει το `tailscale serve --bg 3001` πριν από το `npm run serve`, αν υπάρχει το `tailscale` στο PATH. Cloud αργότερα, αν το ζητήσει.
 - Endpoints συνόψεων: `GET /api/summary?month=YYYY-MM` (`MonthSummary`) και `GET /api/year?year=YYYY` (`YearSummary`: 12 μήνες + σύνολο + μήνες συν/μείον). Όλοι οι υπολογισμοί γίνονται στο `shared/src/calc.ts`.
 - Κατηγορίες: εικονίδιο + χρώμα. Τα κλειδιά (`CATEGORY_ICONS`, `CATEGORY_COLORS`) ζουν στο `shared`. Η αντιστοίχιση σε lucide components και Tailwind classes γίνεται στο `client/src/lib/category-style.ts`, και οι αποχρώσεις light/dark στα `--cat-*` του `index.css`. Νέο εικονίδιο/χρώμα = προσθήκη και στα τρία. Ο κύκλος «Έξοδα ανά κατηγορία» χρησιμοποιεί το χρώμα της κατηγορίας (`DonutSlice.color`). Τα migrations μπορεί να περιέχουν και `UPDATE` δεδομένων (βλ. `0001_category_style.sql`), αλλά με τις ίδιες τιμές που έχει το seed.
 - Επιλογή λογαριασμού με εικονίδιο: `AccountSelect`. Στη φόρμα συναλλαγής ο λογαριασμός λέγεται «Πληρωμή με» (έξοδο) / «Σε λογαριασμό» (έσοδο), με εικονίδιο ανά τύπο (`client/src/lib/account-style.ts`).
@@ -161,5 +168,5 @@ Env vars του server: `PORT` (3001), `DB_FILE` (`server/data/budget.db`), `LOG
 2. ✅ **Επενδύσεις**: instruments, trades, pies, live τιμές + FX, αξία portfolio.
 3. ✅ **Net worth**: μηνιαίο NW και μεταβολή σε Μήνα και Έτος, συνολική εικόνα ανά έτος στους Λογαριασμούς.
 4. ✅ **Επαναλαμβανόμενες**: κανόνες (μηνιαίοι/ετήσιοι, και για αγορές μετοχών/pie), «Αναμένονται» στον Μήνα με ✓ / ✕.
-5. **Import CSV** (τράπεζα, Revolut) με αντιστοίχιση σε κατηγορίες.
-6. **Cloud & κινητό**: deploy server, auth, PWA install στο κινητό.
+5. ~~**Import CSV**~~: εκτός προς το παρόν (επιλογή χρήστη). Ξεκινάει με τον οδηγό «Ξεκίνα» από 1/11/2026 και καταχωρεί χειροκίνητα. Μην το ξεκινήσεις χωρίς να ρωτήσεις.
+6. ✅ **Κινητό**: login, PWA, πρόσβαση μέσω Tailscale (υπολογιστής χρήστη), ημερήσια backup. Cloud: αργότερα, αν χρειαστεί.

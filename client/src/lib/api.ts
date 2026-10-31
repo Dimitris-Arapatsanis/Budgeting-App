@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type {
   AccountInput,
+  AuthStatus,
   AccountWithBalance,
   Category,
   CategoryInput,
@@ -31,12 +32,16 @@ import type {
   YearSummary,
 } from '@budget/shared';
 
+/** Ο server απάντησε 401 (έληξε η σύνδεση): το AuthGate ξαναδείχνει την οθόνη σύνδεσης */
+export const UNAUTHORIZED_EVENT = 'budget:unauthorized';
+
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method,
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  if (res.status === 401 && !url.startsWith('/api/auth/')) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
   if (!res.ok) {
     const data = await res.json().catch(() => null);
     throw new Error(data?.error ?? `Σφάλμα ${res.status}`);
@@ -104,6 +109,9 @@ export const useNetWorth = () =>
 
 export const useSetupStatus = () =>
   useQuery({ queryKey: ['setup-status'], queryFn: () => request<SetupStatus>('GET', '/api/setup/status'), staleTime: Infinity });
+
+export const useAuthStatus = () =>
+  useQuery({ queryKey: ['auth-status'], queryFn: () => request<AuthStatus>('GET', '/api/auth/status'), staleTime: Infinity, retry: 1 });
 
 export const useRecurring = () =>
   useQuery({ queryKey: ['recurring'], queryFn: () => request<Recurring[]>('GET', '/api/recurring') });
@@ -283,3 +291,29 @@ export function useSkipRecurring() {
     onError: (err: Error) => toast.error(err.message),
   });
 }
+
+/** Μετά τη σύνδεση: ξανά όλα τα δεδομένα (και η κατάσταση σύνδεσης). */
+function useAuthMutation<TVars>(fn: (vars: TVars) => Promise<unknown>) {
+  const queryClient = useQueryClient();
+  return useMutation({ mutationFn: fn, onSuccess: () => queryClient.invalidateQueries() });
+}
+
+export const useSetupPassword = () => useAuthMutation((password: string) => request('POST', '/api/auth/setup', { password }));
+
+export const useLogin = () => useAuthMutation((password: string) => request('POST', '/api/auth/login', { password }));
+
+export function useLogout() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => request('POST', '/api/auth/logout'),
+    // Καθαρίζουμε ό,τι έχει φορτωθεί, ώστε να μη μείνουν δεδομένα στη μνήμη μετά την αποσύνδεση,
+    // και δείχνουμε αμέσως την οθόνη σύνδεσης
+    onSuccess: () => {
+      queryClient.removeQueries({ predicate: q => q.queryKey[0] !== 'auth-status' });
+      queryClient.setQueryData<AuthStatus>(['auth-status'], s => s && { ...s, authenticated: false });
+    },
+  });
+}
+
+export const useChangePassword = () =>
+  useApiMutation((input: { current: string; next: string }) => request('POST', '/api/auth/password', input), 'Ο κωδικός άλλαξε');

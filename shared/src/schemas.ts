@@ -479,3 +479,18 @@ export const yearQuerySchema = z.object({
 });
 
 export const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
+
+// ---------- Σύνδεση ----------
+
+const password = z.string().min(6, 'Ο κωδικός θέλει τουλάχιστον 6 χαρακτήρες').max(200);
+
+export const authPasswordSchema = z.object({ password });
+export const changePasswordSchema = z.object({ current: z.string().max(200), next: password });
+
+export interface AuthStatus {
+  /** false όταν ο server τρέχει χωρίς σύνδεση (AUTH=off, tests) */
+  enabled: boolean;
+  /** Αν έχει οριστεί κωδικός (αλλιώς ο πρώτος που ανοίγει την εφαρμογή τον ορίζει) */
+  configured: boolean;
+  authenticated: boolean;
+}

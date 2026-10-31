@@ -3,6 +3,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router';
 import { Toaster } from '@/components/ui/sonner';
+import { AuthGate } from '@/components/AuthGate';
 import { Layout } from '@/components/Layout';
 import { AccountsPage } from '@/pages/AccountsPage';
 import { CategoriesPage } from '@/pages/CategoriesPage';
@@ -40,7 +41,9 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
+        <AuthGate>
+          <RouterProvider router={router} />
+        </AuthGate>
         {/* Στο κινητό πάνω από την κάτω μπάρα */}
         <Toaster position="bottom-center" mobileOffset={{ bottom: 'calc(76px + env(safe-area-inset-bottom))' }} />
       </QueryClientProvider>

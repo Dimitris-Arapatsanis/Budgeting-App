@@ -160,3 +160,16 @@ export const fxCache = sqliteTable(
   },
   t => [primaryKey({ columns: [t.pair, t.date] })],
 );
+
+/** Ρυθμίσεις της εφαρμογής (κλειδί → τιμή), π.χ. ο κωδικός σύνδεσης (hash) */
+export const settings = sqliteTable('settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+});
+
+/** Συνδεδεμένες συσκευές: αποθηκεύεται μόνο το hash του token του cookie */
+export const sessions = sqliteTable('sessions', {
+  tokenHash: text('token_hash').primaryKey(),
+  createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  expiresAt: text('expires_at').notNull(),
+});
