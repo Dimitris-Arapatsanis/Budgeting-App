@@ -39,6 +39,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   useAccounts,
   useDeleteInstrument,
+  useDeletePie,
   useDeleteTrades,
   useInstruments,
   usePies,
@@ -55,6 +56,7 @@ type DialogState =
   | { kind: 'trade'; trade?: Trade; side?: TradeSide }
   | { kind: 'pie-buy'; pie: Pie; mode: PieDialogMode }
   | { kind: 'pie-edit'; pie: Pie }
+  | { kind: 'pie-new' }
   | { kind: 'instrument' };
 
 export function InvestmentsPage() {
@@ -65,6 +67,7 @@ export function InvestmentsPage() {
   const { data: accounts = [] } = useAccounts();
   const [dialog, setDialog] = useState<DialogState>({ kind: 'closed' });
   const close = () => setDialog({ kind: 'closed' });
+  const deletePie = useDeletePie();
 
   const instrument = (id: number) => instruments.find(i => i.id === id);
   const accountName = (id: number) => accounts.find(a => a.id === id)?.name ?? '—';
@@ -176,6 +179,7 @@ export function InvestmentsPage() {
           onBuy={() => setDialog({ kind: 'pie-buy', pie, mode: 'buy' })}
           onOpening={() => setDialog({ kind: 'pie-buy', pie, mode: 'opening' })}
           onEdit={() => setDialog({ kind: 'pie-edit', pie })}
+          onDelete={() => confirm(`Διαγραφή του pie «${pie.name}»; Οι μετοχές του μένουν.`) && deletePie.mutate(pie.id)}
         />
       ))}
 
@@ -189,7 +193,11 @@ export function InvestmentsPage() {
         />
       )}
 
-      <InstrumentList instruments={instruments} onAdd={() => setDialog({ kind: 'instrument' })} />
+      <InstrumentList
+        instruments={instruments}
+        onAdd={() => setDialog({ kind: 'instrument' })}
+        onNewPie={accounts.some(a => a.type === 'broker') ? () => setDialog({ kind: 'pie-new' }) : undefined}
+      />
 
       <TradeDialog
         open={dialog.kind === 'trade'}
@@ -202,7 +210,7 @@ export function InvestmentsPage() {
         mode={dialog.kind === 'pie-buy' ? dialog.mode : 'buy'}
         onClose={close}
       />
-      <PieEditDialog pie={dialog.kind === 'pie-edit' ? dialog.pie : undefined} onClose={close} />
+      <PieEditDialog pie={dialog.kind === 'pie-edit' ? dialog.pie : undefined} create={dialog.kind === 'pie-new'} onClose={close} />
       <InstrumentDialog open={dialog.kind === 'instrument'} onClose={close} />
     </div>
   );
@@ -338,6 +346,7 @@ function PieCard({
   onBuy,
   onOpening,
   onEdit,
+  onDelete,
 }: {
   pie: Pie;
   drift?: PieDrift;
@@ -346,6 +355,7 @@ function PieCard({
   onBuy: () => void;
   onOpening: () => void;
   onEdit: () => void;
+  onDelete: () => void;
 }) {
   const hasValue = (drift?.valueEur ?? 0) > 0;
   return (
@@ -360,6 +370,7 @@ function PieCard({
         <div className="flex gap-1">
           <Button variant="ghost" size="icon-sm" title="Αρχικές θέσεις" onClick={onOpening}><PackagePlus className="size-4" /></Button>
           <Button variant="ghost" size="icon-sm" title="Σύνθεση" onClick={onEdit}><Pencil className="size-4" /></Button>
+          <Button variant="ghost" size="icon-sm" title="Διαγραφή pie" className="hover:text-negative" onClick={onDelete}><Trash2 className="size-4" /></Button>
           <Button variant="outline" size="sm" className="rounded-full" onClick={onBuy}>
             <ShoppingCart className="size-4" /> Αγορά
           </Button>
@@ -531,15 +542,22 @@ function TradeList({
   );
 }
 
-function InstrumentList({ instruments, onAdd }: { instruments: Instrument[]; onAdd: () => void }) {
+function InstrumentList({ instruments, onAdd, onNewPie }: { instruments: Instrument[]; onAdd: () => void; onNewPie?: () => void }) {
   const remove = useDeleteInstrument();
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-lg font-bold tracking-tight">Μετοχές</h2>
-        <Button variant="outline" size="sm" className="rounded-full" onClick={onAdd}>
-          <Plus className="size-4" /> Προσθήκη
-        </Button>
+        <div className="flex gap-2">
+          {onNewPie && (
+            <Button variant="outline" size="sm" className="rounded-full" onClick={onNewPie}>
+              <ChartPie className="size-4" /> Νέο pie
+            </Button>
+          )}
+          <Button variant="outline" size="sm" className="rounded-full" onClick={onAdd}>
+            <Plus className="size-4" /> Προσθήκη
+          </Button>
+        </div>
       </div>
       <ul className="flex flex-wrap gap-2">
         {instruments.map(i => (

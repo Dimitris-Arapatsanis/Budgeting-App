@@ -9,7 +9,7 @@ import {
   type AccountWithBalance,
 } from '@budget/shared';
 import type { Db } from '../db/index.ts';
-import { accounts, trades, transactions } from '../db/schema.ts';
+import { accounts, pies, trades, transactions } from '../db/schema.ts';
 import { HttpError, notFound } from '../http-error.ts';
 import { listTrades } from './investments.ts';
 import { usedByRecurring } from './recurring.ts';
@@ -60,6 +60,9 @@ export function accountRoutes(app: FastifyInstance, db: Db) {
     const traded = db.select({ id: trades.id }).from(trades).where(eq(trades.accountId, id)).limit(1).get();
     if (used || traded) throw new HttpError(409, 'Ο λογαριασμός έχει συναλλαγές. Μπορείς να τον αρχειοθετήσεις.');
     if (usedByRecurring(db, { accountId: id })) throw new HttpError(409, 'Ο λογαριασμός χρησιμοποιείται σε επαναλαμβανόμενη συναλλαγή');
+    if (db.select({ id: pies.id }).from(pies).where(eq(pies.accountId, id)).limit(1).get()) {
+      throw new HttpError(409, 'Ο λογαριασμός έχει pie. Διάγραψε πρώτα το pie.');
+    }
     const row = db.delete(accounts).where(eq(accounts.id, id)).returning().get();
     if (!row) throw notFound('Ο λογαριασμός');
     return reply.code(204).send();

@@ -3,14 +3,27 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import type { AccountType, CategoryColor, CategoryIcon, CategoryKind } from '@budget/shared';
 import * as schema from './schema.ts';
 
+/**
+ * Τι υπάρχει σε μια καινούργια βάση. `default`: γενικά (μία τράπεζα και μετρητά, χωρίς μετοχές), ώστε ο κάθε
+ * χρήστης να προσθέσει τα δικά του στον οδηγό «Ξεκίνα». `demo`: οι λογαριασμοί, οι μετοχές και το pie
+ * του αρχικού χρήστη, για τα tests.
+ */
+export type SeedProfile = 'default' | 'demo';
+
 // Υπόλοιπα 0: τα πραγματικά ποσά τα βάζει ο χρήστης μέσα από την εφαρμογή.
-const DEFAULT_ACCOUNTS: Array<{ name: string; type: AccountType }> = [
+const ACCOUNTS: Record<SeedProfile, Array<{ name: string; type: AccountType }>> = {
+  default: [
+    { name: 'Τράπεζα', type: 'bank' },
+    { name: 'Μετρητά', type: 'cash' },
+  ],
+  demo: [
   { name: 'Τράπεζα Πειραιώς', type: 'bank' },
   { name: 'Alpha Bank', type: 'savings' },
   { name: 'Μετρητά', type: 'cash' },
   { name: 'Revolut', type: 'broker' },
   { name: 'Trading 212', type: 'broker' },
-];
+  ],
+};
 
 type CategorySeed = [name: string, icon: CategoryIcon, color: CategoryColor];
 
@@ -52,10 +65,10 @@ const DEFAULT_INSTRUMENTS: Array<{ ticker: string; name: string; currency: strin
 ];
 
 /** Γεμίζει λογαριασμούς και κατηγορίες μόνο αν οι πίνακες είναι άδειοι (πρώτο τρέξιμο). */
-export function seed(db: BetterSQLite3Database<typeof schema>) {
+export function seed(db: BetterSQLite3Database<typeof schema>, profile: SeedProfile = 'default') {
   if (!db.select().from(schema.accounts).limit(1).get()) {
     db.insert(schema.accounts)
-      .values(DEFAULT_ACCOUNTS.map((a, i) => ({ ...a, initialBalance: 0, sortOrder: i })))
+      .values(ACCOUNTS[profile].map((a, i) => ({ ...a, initialBalance: 0, sortOrder: i })))
       .run();
   }
   if (!db.select().from(schema.categories).limit(1).get()) {
@@ -63,7 +76,7 @@ export function seed(db: BetterSQLite3Database<typeof schema>) {
       items.map(([name, icon, color]) => ({ name, kind: kind as CategoryKind, icon, color })));
     db.insert(schema.categories).values(rows).run();
   }
-  if (!db.select().from(schema.instruments).limit(1).get()) {
+  if (profile === 'demo' && !db.select().from(schema.instruments).limit(1).get()) {
     const rows = db.insert(schema.instruments)
       .values(DEFAULT_INSTRUMENTS.map(({ ticker, name, currency }) => ({ ticker, name, currency })))
       .returning().all();

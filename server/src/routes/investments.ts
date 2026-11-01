@@ -28,7 +28,7 @@ import {
   type Trade,
 } from '@budget/shared';
 import type { Db } from '../db/index.ts';
-import { accounts, instruments, pieSlices, pies, trades, transactions } from '../db/schema.ts';
+import { accounts, instruments, pieSlices, pies, recurring, trades, transactions } from '../db/schema.ts';
 import { HttpError, notFound } from '../http-error.ts';
 import type { MarketData } from '../market/market-data.ts';
 import type { Prices } from '../market/prices.ts';
@@ -282,6 +282,20 @@ export function investmentRoutes(app: FastifyInstance, db: Db, market: MarketDat
   app.put('/api/pies/:id', req => {
     const { id } = idParamSchema.parse(req.params);
     return getPie(db, savePie(id, req.body));
+  });
+
+  // Διαγραφή pie: μόνο χωρίς κινήσεις ή επαναλαμβανόμενες αγορές (οι μετοχές του μένουν)
+  app.delete('/api/pies/:id', (req, reply) => {
+    const { id } = idParamSchema.parse(req.params);
+    getPie(db, id);
+    if (db.select({ id: trades.id }).from(trades).where(eq(trades.pieId, id)).limit(1).get()) {
+      throw new HttpError(409, 'Το pie έχει κινήσεις και δεν μπορεί να διαγραφεί');
+    }
+    if (db.select({ id: recurring.id }).from(recurring).where(eq(recurring.pieId, id)).limit(1).get()) {
+      throw new HttpError(409, 'Το pie χρησιμοποιείται σε επαναλαμβανόμενη αγορά');
+    }
+    db.delete(pies).where(eq(pies.id, id)).run();
+    return reply.code(204).send();
   });
 
   // Πρόταση για αγορά στο pie: μοίρασμα του ποσού και ποσότητες με την τιμή της ημέρας. Δεν αποθηκεύει τίποτα.

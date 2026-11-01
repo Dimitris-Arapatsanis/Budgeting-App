@@ -17,7 +17,7 @@ async function api<T = unknown>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', url: 
 
 beforeEach(() => {
   backupDir = mkdtempSync(join(tmpdir(), 'budget-backup-'));
-  app = buildApp(openDb(':memory:'), { market: fakeMarket(), backupDir });
+  app = buildApp(openDb(':memory:', { seed: 'demo' }), { market: fakeMarket(), backupDir });
 });
 afterEach(() => rmSync(backupDir, { recursive: true, force: true }));
 
@@ -130,9 +130,22 @@ describe('reset («Έναρξη από την αρχή»)', () => {
 
     expect((await api<SetupStatus>('GET', '/api/setup/status')).body).toEqual({ empty: true });
     const accounts = (await api<AccountWithBalance[]>('GET', '/api/accounts')).body;
-    expect(accounts.map(a => a.name)).toEqual(['Τράπεζα Πειραιώς', 'Alpha Bank', 'Μετρητά', 'Revolut', 'Trading 212']);
+    // Μετά την «Έναρξη από την αρχή»: τα γενικά αρχικά, χωρίς μετοχές και pie
+    expect(accounts.map(a => [a.name, a.type])).toEqual([['Τράπεζα', 'bank'], ['Μετρητά', 'cash']]);
     expect((await api<Debt[]>('GET', '/api/debts')).body).toEqual([]);
-    expect((await api<Pie[]>('GET', '/api/pies')).body[0]!.slices).toHaveLength(9);
+    expect((await api<Pie[]>('GET', '/api/pies')).body).toEqual([]);
+    expect((await api<Instrument[]>('GET', '/api/instruments')).body).toEqual([]);
     expect((await api<Array<{ name: string }>>('GET', '/api/categories')).body.some(c => c.name === 'Δική μου')).toBe(false);
+  });
+});
+
+describe('default seed', () => {
+  it('a new app starts with a generic bank and cash account, no stocks', async () => {
+    app = buildApp(openDb(':memory:'), { market: fakeMarket() });
+    const accounts = (await api<AccountWithBalance[]>('GET', '/api/accounts')).body;
+    expect(accounts.map(a => [a.name, a.type, a.balance])).toEqual([['Τράπεζα', 'bank', 0], ['Μετρητά', 'cash', 0]]);
+    expect((await api<Instrument[]>('GET', '/api/instruments')).body).toEqual([]);
+    expect((await api<Pie[]>('GET', '/api/pies')).body).toEqual([]);
+    expect((await api<Array<{ id: number }>>('GET', '/api/categories')).body).toHaveLength(15);
   });
 });

@@ -216,6 +216,9 @@ export function useDeleteTrades() {
   });
 }
 
+export const useDeletePie = () =>
+  useApiMutation((id: number) => request('DELETE', `/api/pies/${id}`), 'Το pie διαγράφηκε');
+
 export const useSavePie = () =>
   useApiMutation(({ id, input }: { id?: number; input: PieInput }) =>
     id ? request('PUT', `/api/pies/${id}`, input) : request('POST', '/api/pies', input), 'Το pie αποθηκεύτηκε');

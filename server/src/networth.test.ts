@@ -14,7 +14,7 @@ async function api<T = unknown>(method: 'GET' | 'POST' | 'PUT', url: string, pay
 
 beforeEach(() => {
   market = fakeMarket();
-  app = buildApp(openDb(':memory:'), { market });
+  app = buildApp(openDb(':memory:', { seed: 'demo' }), { market });
 });
 
 describe('net worth', () => {

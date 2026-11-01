@@ -5,9 +5,10 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input';
 import { useAddInstrument, useInstruments, useInstrumentSearch } from '@/lib/api';
 import { toast } from 'sonner';
+import type { Instrument } from '@budget/shared';
 
 /** Προσθήκη μετοχής/ETF με αναζήτηση στο Yahoo Finance. */
-export function InstrumentDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function InstrumentDialog({ open, onClose, onAdded }: { open: boolean; onClose: () => void; onAdded?: (instrument: Instrument) => void }) {
   const [text, setText] = useState('');
   const [query, setQuery] = useState('');
   const { data: results = [], isFetching, isError } = useInstrumentSearch(query);
@@ -29,6 +30,7 @@ export function InstrumentDialog({ open, onClose }: { open: boolean; onClose: ()
     add.mutate(ticker, {
       onSuccess: instrument => {
         toast.success(`Προστέθηκε: ${instrument.name}`);
+        onAdded?.(instrument);
         onClose();
       },
     });

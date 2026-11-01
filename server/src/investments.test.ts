@@ -18,7 +18,7 @@ let db: ReturnType<typeof openDb>;
 beforeEach(() => {
   offline = false;
   market = fakeMarket({ failing: () => offline });
-  db = openDb(':memory:');
+  db = openDb(':memory:', { seed: 'demo' });
   app = buildApp(db, { market });
 });
 
@@ -183,5 +183,22 @@ describe('portfolio', () => {
     const m = (await api<InvestmentMonth>('GET', '/api/portfolio/month?month=2026-08')).body;
     // Μπήκαν 10 × 85 € (κλείσιμο 14/8) = 850 €, τέλος μήνα 10 × 90 € = 900 € → +50 €, όχι +400 €
     expect(m).toMatchObject({ opened: 50_000, valueStart: 0, valueEnd: 90_000, marketChange: 5_000, incomplete: false });
+  });
+});
+
+describe('pie create and delete', () => {
+  it('creates a pie on another broker and deletes it only without trades', async () => {
+    const f = await fixtures();
+    const created = await api<Pie>('POST', '/api/pies', { name: 'Δεύτερο', accountId: f.revolut, slices: [{ instrumentId: f.msft, targetPercent: 100 }] });
+    expect(created.status).toBe(201);
+    expect((await api<Pie[]>('GET', '/api/pies')).body).toHaveLength(2);
+    await api('POST', '/api/trades', { date: '2026-10-10', accountId: f.revolut, instrumentId: f.msft, side: 'buy', quantity: 0.1, amountEur: 2_000, pieId: created.body.id });
+    expect((await api('DELETE', `/api/pies/${created.body.id}`)).status).toBe(409);
+    // Broker με pie: δεν σβήνεται
+    expect((await api('DELETE', `/api/accounts/${f.t212}`)).status).toBe(409);
+    const [trade] = (await api<Trade[]>('GET', '/api/trades')).body;
+    await api('DELETE', `/api/trades/${trade!.id}`);
+    expect((await api('DELETE', `/api/pies/${created.body.id}`)).status).toBe(204);
+    expect((await api<Pie[]>('GET', '/api/pies')).body).toHaveLength(1);
   });
 });

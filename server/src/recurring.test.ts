@@ -12,7 +12,7 @@ async function api<T = unknown>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', url: 
 }
 
 beforeEach(() => {
-  app = buildApp(openDb(':memory:'), { market: fakeMarket() });
+  app = buildApp(openDb(':memory:', { seed: 'demo' }), { market: fakeMarket() });
 });
 
 async function fixtures() {

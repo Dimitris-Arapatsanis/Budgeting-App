@@ -13,7 +13,11 @@ import { SetupPage } from '@/pages/SetupPage';
 import { YearPage } from '@/pages/YearPage';
 import { ThemeProvider } from '@/lib/theme';
 import { currentMonth } from '@budget/shared';
+import { registerSW } from 'virtual:pwa-register';
 import './index.css';
+
+// Νέα έκδοση της εφαρμογής: ο service worker ενημερώνεται και η σελίδα ξαναφορτώνει μόνη της
+registerSW({ immediate: true });
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false } },

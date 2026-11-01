@@ -12,6 +12,7 @@ export default defineConfig({
     // εφαρμογή (HTML/JS/CSS), ποτέ δεδομένα του /api.
     VitePWA({
       registerType: 'autoUpdate',
+      injectRegister: false,
       includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       manifest: {
         name: 'Budget',

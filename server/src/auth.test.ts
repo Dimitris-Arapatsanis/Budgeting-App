@@ -21,7 +21,7 @@ async function api<T = unknown>(method: 'GET' | 'POST', url: string, payload?: o
 
 beforeEach(() => {
   cookie = '';
-  app = buildApp(openDb(':memory:'), { market: fakeMarket(), auth: true });
+  app = buildApp(openDb(':memory:', { seed: 'demo' }), { market: fakeMarket(), auth: true });
 });
 
 describe('passwords', () => {
@@ -78,7 +78,7 @@ describe('auth', () => {
   });
 
   it('is open when disabled (tests, AUTH=off)', async () => {
-    app = buildApp(openDb(':memory:'), { market: fakeMarket() });
+    app = buildApp(openDb(':memory:', { seed: 'demo' }), { market: fakeMarket() });
     expect((await api<AuthStatus>('GET', '/api/auth/status')).body).toEqual({ enabled: false, configured: true, authenticated: true });
     expect((await api('GET', '/api/accounts')).status).toBe(200);
   });
@@ -89,7 +89,7 @@ describe('serving the app', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'budget-static-'));
     writeFileSync(join(dir, 'index.html'), '<!doctype html><title>Budget</title>');
-    app = buildApp(openDb(':memory:'), { market: fakeMarket(), auth: true, staticDir: dir });
+    app = buildApp(openDb(':memory:', { seed: 'demo' }), { market: fakeMarket(), auth: true, staticDir: dir });
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -109,7 +109,7 @@ describe('daily backups', () => {
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   it('writes one backup per day and keeps the latest ones', () => {
-    const db = openDb(':memory:');
+    const db = openDb(':memory:', { seed: 'demo' });
     const backups = join(dir, 'backups');
     mkdirSync(backups);
     writeFileSync(join(backups, 'budget-reset.db'), 'x');
