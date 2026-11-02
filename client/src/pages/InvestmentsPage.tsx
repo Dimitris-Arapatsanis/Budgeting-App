@@ -34,6 +34,7 @@ import { PieBuyDialog, type PieDialogMode } from '@/components/PieBuyDialog';
 import { PieEditDialog } from '@/components/PieEditDialog';
 import { StatCard } from '@/components/StatCard';
 import { TradeDialog } from '@/components/TradeDialog';
+import { groupTrades, singleTrade, TickerBadge, TradeAmount } from '@/components/TradeRows';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -299,15 +300,6 @@ function PlatformTable({ rows }: { rows: Array<{ id: number; name: string; value
 }
 
 /** Κύκλος με τα πρώτα γράμματα του συμβόλου (χωρίς το χρηματιστήριο, π.χ. VUSA.AS → VUSA). */
-function TickerBadge({ ticker }: { ticker?: string }) {
-  const label = (ticker ?? '?').split('.')[0]!.slice(0, 4);
-  return (
-    <span className="grid size-9 shrink-0 place-items-center rounded-full bg-primary/12 text-[10px] font-bold tracking-tight text-primary">
-      {label}
-    </span>
-  );
-}
-
 function PositionRow({ position: p, instrument, accountName }: { position: Position; instrument?: Instrument; accountName: string }) {
   const value = p.valueEur ?? p.costEur;
   const gain = value - p.costEur;
@@ -416,37 +408,6 @@ function DriftBar({ target, actual, max }: { target: number; actual: number | nu
   );
 }
 
-/** Μια γραμμή της λίστας: μία κίνηση ή όλες οι κινήσεις μιας αγοράς στο pie (ίδια μέρα, ίδιο pie, ίδιο είδος). */
-type TradeEntry =
-  | { kind: 'single'; trade: Trade }
-  /** `key`: μοναδικό (React, ανάπτυξη) · `match`: pie + είδος + μεταφορά, για να ενωθούν οι κινήσεις μιας αγοράς */
-  | { kind: 'pie'; key: string; match: string; pieId: number; trades: Trade[] };
-
-function groupTrades(trades: Trade[]): Array<[string, TradeEntry[]]> {
-  const days = new Map<string, TradeEntry[]>();
-  for (const t of trades) {
-    const entries = days.get(t.date) ?? [];
-    days.set(t.date, entries);
-    if (t.pieId == null) {
-      entries.push({ kind: 'single', trade: t });
-      continue;
-    }
-    // Μια αγορά στο pie = οι κινήσεις που αποθηκεύτηκαν μαζί (batchId). Για παλιότερες χωρίς batchId:
-    // ίδιο pie, είδος και μεταφορά «Χρήματα από». Έτσι δύο αγορές της ίδιας μέρας μένουν χωριστές γραμμές.
-    const match = t.batchId != null ? `b${t.batchId}` : `${t.pieId}:${t.side}:${t.fundingTransactionId ?? '-'}`;
-    const group = entries.find((e): e is Extract<TradeEntry, { kind: 'pie' }> => e.kind === 'pie' && e.match === match);
-    if (group) group.trades.push(t);
-    else entries.push({ kind: 'pie', key: `${t.date}:${t.id}`, match, pieId: t.pieId, trades: [t] });
-  }
-  return [...days];
-}
-
-/** Ποσό κίνησης: αγορά αρνητική (βγήκαν μετρητά), πώληση θετική, αρχική θέση χωρίς πρόσημο. */
-function TradeAmount({ side, cents }: { side: TradeSide; cents: number }) {
-  if (side === 'opening') return <Amount cents={cents} className="text-sm text-muted-foreground" />;
-  return <Amount cents={side === 'sell' ? cents : -cents} signed className="text-sm font-semibold" />;
-}
-
 const ROW_DELETE_CLASS =
   'mx-2 rounded-full text-muted-foreground hover:bg-negative/10 hover:text-negative focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100';
 
@@ -504,7 +465,8 @@ function TradeList({
             <div className="mb-2 px-1 text-xs font-semibold text-muted-foreground">{formatDay(date)}</div>
             <ul className="surface divide-y overflow-hidden">
               {entries.map(e => {
-                if (e.kind === 'single' || e.trades.length === 1) return tradeRow(e.kind === 'single' ? e.trade : e.trades[0]!);
+                const single = singleTrade(e);
+                if (single || e.kind !== 'pie') return tradeRow(single!);
                 const first = e.trades[0]!;
                 const open = expanded.has(e.key);
                 const total = e.trades.reduce((sum, t) => sum + t.amountEur, 0);

@@ -3,6 +3,8 @@ import {
   ArrowLeftRight,
   ArrowUpRight,
   ChartLine,
+  ChartPie,
+  ChevronDown,
   HandCoins,
   Plus,
   Scale,
@@ -16,15 +18,18 @@ import {
   currentMonth,
   formatEur,
   formatMonth,
+  formatQuantity,
   lastDayOfMonth,
   MONTH_KEY_RE,
   shiftMonth,
   today,
+  TRADE_SIDE_LABELS,
   type AccountWithBalance,
   type Category,
   type Pie,
   type RecurringDue,
   type MonthSummary,
+  type Trade,
   type Transaction,
 } from '@budget/shared';
 import { Amount } from '@/components/Amount';
@@ -37,17 +42,23 @@ import { StatCard } from '@/components/StatCard';
 import { PieBuyDialog, type PieBuyTemplate } from '@/components/PieBuyDialog';
 import { RecurringDueSection } from '@/components/Recurring';
 import { TradeDialog, type TradeTemplate } from '@/components/TradeDialog';
+import { groupTrades, singleTrade, TickerBadge, TradeAmount, type TradeEntry } from '@/components/TradeRows';
 import { TransactionDialog, type TransactionTemplate } from '@/components/TransactionDialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   useAccounts,
   useCategories,
+  useDeleteTrades,
   useDeleteTransaction,
+  useRemoveFee,
+  useInstruments,
   useNetWorth,
   usePies,
   useSummary,
+  useTrades,
   useTransactions,
+  type FeeOwner,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -65,17 +76,20 @@ function MonthView({ month }: { month: string }) {
   const { data: allTransactions = [], isLoading } = useTransactions(month);
   // Οι διορθώσεις υπολοίπου δεν φαίνονται (επιλογή χρήστη): διορθώνουν μόνο το υπόλοιπο, δεν είναι κινήσεις
   const transactions = allTransactions.filter(t => t.type !== 'adjustment');
+  const { data: allTrades = [] } = useTrades();
+  // Οι κινήσεις μετοχών του μήνα (οι αρχικές θέσεις είναι αφετηρία, δεν φαίνονται)
+  const trades = useMemo(() => allTrades.filter(t => t.date.startsWith(month) && t.side !== 'opening'), [allTrades, month]);
   const { data: categories = [] } = useCategories();
   const [dialog, setDialog] = useState<{ open: boolean; transaction?: Transaction; template?: TransactionTemplate }>({ open: false });
   // Καταχώριση από τα «Αναμένονται»: αγορά μετοχής ή αγορά στο pie
-  const [tradeTemplate, setTradeTemplate] = useState<TradeTemplate>();
+  const [tradeDialog, setTradeDialog] = useState<{ trade?: Trade; template?: TradeTemplate }>();
   const [pieBuy, setPieBuy] = useState<{ pie: Pie; template: PieBuyTemplate }>();
   const { data: pies = [] } = usePies();
 
   function recordDue({ recurring: r, dueDate }: RecurringDue) {
     const link = { recurringId: r.id, recurringDue: dueDate };
     if (r.kind === 'buy') {
-      setTradeTemplate({ instrumentId: r.instrumentId!, accountId: r.accountId, amount: r.amount, fundingAccountId: r.fundingAccountId, date: dueDate, ...link });
+      setTradeDialog({ template: { instrumentId: r.instrumentId!, accountId: r.accountId, amount: r.amount, fundingAccountId: r.fundingAccountId, date: dueDate, ...link } });
     } else if (r.kind === 'pie') {
       const pie = pies.find(p => p.id === r.pieId);
       if (pie) setPieBuy({ pie, template: { amount: r.amount, date: dueDate, fundingAccountId: r.fundingAccountId, ...link } });
@@ -135,7 +149,7 @@ function MonthView({ month }: { month: string }) {
 
       <section className="pt-2">
         <h2 className="mb-3 text-lg font-bold tracking-tight">Συναλλαγές</h2>
-        {!isLoading && transactions.length === 0 ? (
+        {!isLoading && transactions.length === 0 && trades.length === 0 ? (
           <div className="rounded-2xl border-2 border-dashed p-10 text-center text-sm text-muted-foreground">
             Δεν υπάρχουν συναλλαγές αυτόν τον μήνα.
             <div className="mt-4">
@@ -147,8 +161,10 @@ function MonthView({ month }: { month: string }) {
         ) : (
           <TransactionList
             transactions={transactions}
+            trades={trades}
             category={category}
             onSelect={t => setDialog({ open: true, transaction: t })}
+            onSelectTrade={trade => setTradeDialog({ trade })}
           />
         )}
       </section>
@@ -160,7 +176,7 @@ function MonthView({ month }: { month: string }) {
         template={dialog.template}
         defaultDate={defaultDate}
       />
-      <TradeDialog open={!!tradeTemplate} onOpenChange={open => !open && setTradeTemplate(undefined)} template={tradeTemplate} />
+      <TradeDialog open={!!tradeDialog} onOpenChange={open => !open && setTradeDialog(undefined)} trade={tradeDialog?.trade} template={tradeDialog?.template} />
       <PieBuyDialog pie={pieBuy?.pie} mode="buy" template={pieBuy?.template} onClose={() => setPieBuy(undefined)} />
     </div>
   );
@@ -224,18 +240,66 @@ function StatusMessage({ summary: s }: { summary: MonthSummary }) {
   return null;
 }
 
+/** Μια γραμμή της λίστας του μήνα: συναλλαγή ή κίνηση μετοχών (μία κίνηση ή μια αγορά στο pie). */
+type ListRow = { kind: 'tx'; transaction: Transaction } | { kind: 'trade'; entry: TradeEntry };
+
+/**
+ * Συναλλαγές και κινήσεις μετοχών ανά ημέρα. Μια αγορά με «Χρήματα από» φαίνεται ως μία γραμμή στη θέση της
+ * μεταφοράς της (η μεταφορά κρύβεται), και κάθε χρέωση ακριβώς κάτω από αυτό στο οποίο ανήκει.
+ */
+function buildRows(transactions: Transaction[], trades: Trade[]): Array<[string, ListRow[]]> {
+  const txDays = new Map<string, Transaction[]>();
+  for (const t of transactions) txDays.set(t.date, [...(txDays.get(t.date) ?? []), t]);
+  const tradeDays = new Map(groupTrades(trades));
+  const dates = [...new Set([...txDays.keys(), ...tradeDays.keys()])].sort().reverse();
+
+  return dates.map(date => {
+    const txs = txDays.get(date) ?? [];
+    const ids = new Set(txs.map(t => t.id));
+    const byFunding = new Map<number, TradeEntry[]>();
+    const rows: ListRow[] = [];
+    for (const entry of tradeDays.get(date) ?? []) {
+      const fundingId = entry.trades[0]!.fundingTransactionId;
+      if (fundingId != null && ids.has(fundingId)) byFunding.set(fundingId, [...(byFunding.get(fundingId) ?? []), entry]);
+      else rows.push({ kind: 'trade', entry });
+    }
+    const isFee = (t: Transaction) => t.feeForId != null && ids.has(t.feeForId);
+    for (const t of txs) {
+      if (isFee(t)) continue;
+      const funded = byFunding.get(t.id);
+      if (funded) rows.push(...funded.map(entry => ({ kind: 'trade' as const, entry })));
+      else rows.push({ kind: 'tx', transaction: t });
+      for (const fee of txs) if (fee.feeForId === t.id) rows.push({ kind: 'tx', transaction: fee });
+    }
+    return [date, rows];
+  });
+}
+
+const ROW_DELETE_CLASS =
+  'mx-2 rounded-full text-muted-foreground hover:bg-negative/10 hover:text-negative focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100';
+
 function TransactionList({
   transactions,
+  trades,
   category,
   onSelect,
+  onSelectTrade,
 }: {
   transactions: Transaction[];
+  trades: Trade[];
   category: (id: number | null) => Category | undefined;
   onSelect: (t: Transaction) => void;
+  onSelectTrade: (t: Trade) => void;
 }) {
   const { data: accounts = [] } = useAccounts();
+  const { data: instruments = [] } = useInstruments();
+  const { data: pies = [] } = usePies();
   const remove = useDeleteTransaction();
+  const removeTrades = useDeleteTrades();
+  const removeFee = useRemoveFee();
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const accountName = (id: number | null) => accounts.find(a => a.id === id)?.name ?? '—';
+  const instrument = (id: number) => instruments.find(i => i.id === id);
   const debtInfo = (t: Transaction) => debtTransfer(t, accounts);
   // Χρωστούμενα και μεταφορές για αγορές μετοχών: αλλάζουν μόνο από εκεί που φτιάχτηκαν
   const locked = (t: Transaction) => t.debtId != null || !!t.tradeFunding || t.feeForId != null;
@@ -244,57 +308,144 @@ function TransactionList({
     const target = t.feeForId != null ? transactions.find(p => p.id === t.feeForId) : t;
     return target && target.type !== 'adjustment' && !locked(target) ? target : undefined;
   };
+  // Η χρέωση μιας αγοράς ανοίγει την αγορά (στο pie, τη μετοχή που έχει τη χρέωση)
+  const feeTrade = (t: Transaction) => {
+    if (t.feeForId == null) return undefined;
+    const funded = trades.filter(x => x.fundingTransactionId === t.feeForId);
+    return funded.find(x => x.fundingFee > 0) ?? funded[0];
+  };
+  // Σε τι ανήκει μια χρέωση, για να σβηστεί (η συναλλαγή της ή οι αγορές που χρηματοδοτεί η μεταφορά της)
+  const feeOwner = (t: Transaction): FeeOwner | undefined => {
+    if (t.feeForId == null) return undefined;
+    const parent = transactions.find(p => p.id === t.feeForId);
+    if (parent && !locked(parent)) return { kind: 'transaction', transaction: parent };
+    const funded = trades.filter(x => x.fundingTransactionId === t.feeForId);
+    return funded.length ? { kind: 'trades', trades: funded } : undefined;
+  };
+  const toggle = (key: string) =>
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
 
-  const byDay = useMemo(() => {
-    const groups = new Map<string, Transaction[]>();
-    for (const t of transactions) groups.set(t.date, [...(groups.get(t.date) ?? []), t]);
-    return [...groups];
-  }, [transactions]);
+  const byDay = useMemo(() => buildRows(transactions, trades), [transactions, trades]);
+
+  // «Πειραιώς → Trading 212» όταν τα λεφτά ήρθαν από άλλον λογαριασμό, αλλιώς μόνο ο broker
+  const tradeAccounts = (t: Trade) =>
+    t.fundingAccountId != null ? `${accountName(t.fundingAccountId)} → ${accountName(t.accountId)}` : accountName(t.accountId);
+
+  const transactionRow = (t: Transaction) => {
+    const target = editTarget(t);
+    const trade = target ? undefined : feeTrade(t);
+    const owner = feeOwner(t);
+    return (
+      <li key={`x${t.id}`} className="group flex items-center transition-colors hover:bg-muted/60">
+        <button
+          type="button"
+          onClick={() => { if (target) onSelect(target); else if (trade) onSelectTrade(trade); }}
+          title={t.debtId != null ? 'Αλλάζει από τα Χρωστούμενα, στους Λογαριασμούς' : t.tradeFunding ? 'Αλλάζει από την αγορά, στις Επενδύσεις' : t.feeForId != null ? 'Χρέωση: αλλάζει μαζί με τη συναλλαγή της' : undefined}
+          className={cn(
+            'flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 text-left outline-none',
+            !target && !trade && 'cursor-default',
+            locked(t) && !owner && 'pr-4',
+          )}
+        >
+          <TransactionIcon transaction={t} category={category(t.categoryId)} debt={!!debtInfo(t)} />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium">
+              {debtInfo(t)?.label ?? (t.type === 'transfer' ? 'Μεταφορά' : t.type === 'adjustment' ? 'Διόρθωση υπολοίπου' : category(t.categoryId)?.name ?? '—')}
+              {t.description && t.type !== 'adjustment' && <span className="font-normal text-muted-foreground"> · {t.description}</span>}
+            </div>
+            <div className="truncate text-xs text-muted-foreground">
+              {debtInfo(t)
+                ? accountName(debtInfo(t)!.accountId)
+                : t.type === 'transfer' ? `${accountName(t.accountId)} → ${accountName(t.toAccountId)}` : accountName(t.accountId)}
+            </div>
+          </div>
+          <TransactionAmount transaction={t} />
+        </button>
+        {!locked(t) && <Button
+          variant="ghost"
+          size="icon-sm"
+          title="Διαγραφή"
+          disabled={remove.isPending}
+          onClick={() => remove.mutate(t)}
+          className={ROW_DELETE_CLASS}
+        >
+          <Trash2 className="size-4" />
+        </Button>}
+        {owner && <Button
+          variant="ghost"
+          size="icon-sm"
+          title="Διαγραφή χρέωσης"
+          disabled={removeFee.isPending}
+          onClick={() => removeFee.mutate(owner)}
+          className={ROW_DELETE_CLASS}
+        >
+          <Trash2 className="size-4" />
+        </Button>}
+      </li>
+    );
+  };
+
+  const tradeRow = (t: Trade, nested = false) => (
+    <li key={`t${t.id}`} className={cn('group flex items-center transition-colors hover:bg-muted/60', nested && 'bg-muted/30')}>
+      <button type="button" onClick={() => onSelectTrade(t)} className={cn('flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 text-left outline-none', nested && 'py-2 pl-8')}>
+        <TickerBadge ticker={instrument(t.instrumentId)?.ticker} />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium">
+            {nested ? instrument(t.instrumentId)?.name ?? '—' : <>{TRADE_SIDE_LABELS[t.side]}<span className="font-normal text-muted-foreground"> · {instrument(t.instrumentId)?.name ?? '—'}</span></>}
+          </div>
+          <div className="truncate text-xs text-muted-foreground">
+            {formatQuantity(t.quantity)} μετ.{!nested && <> · {tradeAccounts(t)}</>}
+          </div>
+        </div>
+        <TradeAmount side={t.side} cents={t.amountEur} />
+      </button>
+      <Button variant="ghost" size="icon-sm" title="Διαγραφή" disabled={removeTrades.isPending} onClick={() => removeTrades.mutate([t])} className={ROW_DELETE_CLASS}>
+        <Trash2 className="size-4" />
+      </Button>
+    </li>
+  );
+
+  const entryRows = (e: TradeEntry) => {
+    const single = singleTrade(e);
+    if (single || e.kind !== 'pie') return [tradeRow(single!)];
+    const first = e.trades[0]!;
+    const open = expanded.has(e.key);
+    const total = e.trades.reduce((sum, t) => sum + t.amountEur, 0);
+    return [
+      <li key={e.key} className="group flex items-center transition-colors hover:bg-muted/60">
+        <button type="button" onClick={() => toggle(e.key)} aria-expanded={open} className="flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 text-left outline-none">
+          <span className="grid size-9 shrink-0 place-items-center rounded-full bg-primary/12 text-primary">
+            <ChartPie className="size-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium">
+              {TRADE_SIDE_LABELS[first.side]} στο pie
+              <span className="font-normal text-muted-foreground"> · {pies.find(p => p.id === e.pieId)?.name ?? 'Pie'}</span>
+            </div>
+            <div className="truncate text-xs text-muted-foreground">{e.trades.length} μετοχές · {tradeAccounts(first)}</div>
+          </div>
+          <ChevronDown className={cn('size-4 text-muted-foreground transition-transform', open && 'rotate-180')} />
+          <TradeAmount side={first.side} cents={total} />
+        </button>
+        <Button variant="ghost" size="icon-sm" title="Διαγραφή όλων" disabled={removeTrades.isPending} onClick={() => removeTrades.mutate(e.trades)} className={ROW_DELETE_CLASS}>
+          <Trash2 className="size-4" />
+        </Button>
+      </li>,
+      ...(open ? e.trades.map(t => tradeRow(t, true)) : []),
+    ];
+  };
 
   return (
     <div className="space-y-5">
-      {byDay.map(([date, items]) => (
+      {byDay.map(([date, rows]) => (
         <div key={date}>
           <div className="mb-2 px-1 text-xs font-semibold text-muted-foreground first-letter:uppercase">{formatDay(date)}</div>
           <ul className="surface divide-y overflow-hidden">
-            {items.map(t => (
-              <li key={t.id} className="group flex items-center transition-colors hover:bg-muted/60">
-                <button
-                  type="button"
-                  onClick={() => { const target = editTarget(t); if (target) onSelect(target); }}
-                  title={t.debtId != null ? 'Αλλάζει από τα Χρωστούμενα, στους Λογαριασμούς' : t.tradeFunding ? 'Αλλάζει από την αγορά, στις Επενδύσεις' : t.feeForId != null ? 'Χρέωση: αλλάζει μαζί με τη συναλλαγή της' : undefined}
-                  className={cn(
-                    'flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 text-left outline-none',
-                    !editTarget(t) && 'cursor-default',
-                    locked(t) && 'pr-4',
-                  )}
-                >
-                  <TransactionIcon transaction={t} category={category(t.categoryId)} debt={!!debtInfo(t)} />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">
-                      {debtInfo(t)?.label ?? (t.type === 'transfer' ? 'Μεταφορά' : t.type === 'adjustment' ? 'Διόρθωση υπολοίπου' : category(t.categoryId)?.name ?? '—')}
-                      {t.description && t.type !== 'adjustment' && <span className="font-normal text-muted-foreground"> · {t.description}</span>}
-                    </div>
-                    <div className="truncate text-xs text-muted-foreground">
-                      {debtInfo(t)
-                        ? accountName(debtInfo(t)!.accountId)
-                        : t.type === 'transfer' ? `${accountName(t.accountId)} → ${accountName(t.toAccountId)}` : accountName(t.accountId)}
-                    </div>
-                  </div>
-                  <TransactionAmount transaction={t} />
-                </button>
-                {!locked(t) && <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  title="Διαγραφή"
-                  disabled={remove.isPending}
-                  onClick={() => remove.mutate(t)}
-                  className="mx-2 rounded-full text-muted-foreground hover:bg-negative/10 hover:text-negative focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
-                >
-                  <Trash2 className="size-4" />
-                </Button>}
-              </li>
-            ))}
+            {rows.flatMap(r => (r.kind === 'tx' ? [transactionRow(r.transaction)] : entryRows(r.entry)))}
           </ul>
         </div>
       ))}
@@ -348,9 +499,9 @@ function TransactionAmount({ transaction: t }: { transaction: Transaction }) {
     case 'income':
       return <Amount cents={t.amount} signed colored className="text-sm font-semibold" />;
     case 'expense':
-      return <Amount cents={-t.amount} signed className="text-sm font-semibold" />;
+      return <Amount cents={-t.amount} signed colored className="text-sm font-semibold" />;
     case 'transfer':
-      return <Amount cents={t.amount} className="text-sm text-muted-foreground" />;
+      return <Amount cents={t.amount} className="text-sm font-semibold" />;
     case 'adjustment':
       return <Amount cents={t.amount} signed className="text-sm text-muted-foreground" />;
   }

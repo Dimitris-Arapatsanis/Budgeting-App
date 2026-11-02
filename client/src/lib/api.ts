@@ -163,6 +163,39 @@ export function useDeleteTransaction() {
   });
 }
 
+/** Τι έχει τη χρέωση που σβήνεται: μια συναλλαγή ή οι αγορές μιας μεταφοράς «Χρήματα από». */
+export type FeeOwner = { kind: 'transaction'; transaction: Transaction } | { kind: 'trades'; trades: Trade[] };
+
+/**
+ * Διαγραφή χρέωσης: η συναλλαγή/αγορά της αποθηκεύεται ξανά με χρέωση 0 (η χρέωση δεν σβήνεται μόνη της).
+ * «Αναίρεση» = ξανά αποθήκευση με την παλιά χρέωση.
+ */
+export function useRemoveFee() {
+  const queryClient = useQueryClient();
+  const save = (owner: FeeOwner, restore: boolean) =>
+    owner.kind === 'transaction'
+      ? request('PUT', `/api/transactions/${owner.transaction.id}`, { ...owner.transaction, fee: restore ? owner.transaction.fee ?? 0 : 0 })
+      : Promise.all(owner.trades.filter(t => t.fundingFee > 0).map(t =>
+          request('PUT', `/api/trades/${t.id}`, { ...t, fundingFee: restore ? t.fundingFee : 0 })));
+  return useMutation({
+    mutationFn: (owner: FeeOwner) => save(owner, false),
+    onSuccess: (_result, owner) => {
+      queryClient.invalidateQueries();
+      toast.success('Η χρέωση διαγράφηκε', {
+        action: {
+          label: 'Αναίρεση',
+          onClick: () => {
+            save(owner, true)
+              .then(() => queryClient.invalidateQueries())
+              .catch((err: Error) => toast.error(err.message));
+          },
+        },
+      });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+}
+
 export const useSaveAccount = () =>
   useApiMutation(({ id, input }: { id?: number; input: AccountInput }) =>
     id ? request('PUT', `/api/accounts/${id}`, input) : request('POST', '/api/accounts', input));
