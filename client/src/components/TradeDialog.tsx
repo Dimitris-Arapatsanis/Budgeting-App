@@ -41,6 +41,8 @@ interface FormState {
   date: string;
   /** «Χρήματα από» (μόνο για αγορά): id λογαριασμού ή BROKER_CASH */
   funding: string;
+  /** Χρέωση της μεταφοράς «Χρήματα από» */
+  fee: string;
 }
 
 /** Ο λογαριασμός που ταιριάζει σε μια μετοχή: του pie που την έχει, αλλιώς ο πρώτος broker. */
@@ -78,6 +80,7 @@ function initialState(
       amount: centsToInput(template.amount),
       date: template.date,
       funding: template.fundingAccountId == null ? BROKER_CASH : String(template.fundingAccountId),
+      fee: '',
     };
   }
   if (trade) {
@@ -89,6 +92,7 @@ function initialState(
       amount: centsToInput(trade.amountEur),
       date: trade.date,
       funding: trade.fundingAccountId == null ? BROKER_CASH : String(trade.fundingAccountId),
+      fee: trade.fundingFee ? centsToInput(trade.fundingFee) : '',
     };
   }
   // Οι μετοχές του pie αγοράζονται συνήθως με «Αγορά στο pie», οπότε προτείνουμε πρώτα μια εκτός pie (π.χ. VUSA)
@@ -101,6 +105,7 @@ function initialState(
     amount: '',
     date: today(),
     funding: defaultFunding(accounts),
+    fee: '',
   };
 }
 
@@ -142,6 +147,8 @@ export function TradeDialog({ open, onOpenChange, trade, template, defaultSide =
     e.preventDefault();
     if (!quantity) return setError('Γράψε την ποσότητα, π.χ. 1,5 ή 0,0423');
     if (amount == null || amount <= 0) return setError('Γράψε ένα θετικό ποσό, π.χ. 250 ή 1.234,56');
+    const fundingFee = form.fee.trim() ? parseAmount(form.fee) : 0;
+    if (fundingFee == null || fundingFee < 0) return setError('Μη έγκυρη χρέωση, π.χ. 0,18');
     const input: TradeInput = {
       side: form.side,
       instrumentId: Number(form.instrumentId),
@@ -151,6 +158,7 @@ export function TradeDialog({ open, onOpenChange, trade, template, defaultSide =
       date: form.date,
       pieId: trade?.pieId ?? null,
       fundingAccountId: form.side === 'buy' ? toFundingAccountId(form.funding) : null,
+      fundingFee: form.side === 'buy' ? fundingFee : 0,
       // Η σύνδεση με τον κανόνα επανάληψης μένει και στην επεξεργασία
       recurringId: trade?.recurringId ?? template?.recurringId ?? null,
       recurringDue: trade?.recurringDue ?? template?.recurringDue ?? null,
@@ -237,6 +245,8 @@ export function TradeDialog({ open, onOpenChange, trade, template, defaultSide =
                 value={form.funding}
                 onChange={v => set('funding', v)}
                 amount={amount}
+                fee={form.fee}
+                onFeeChange={v => set('fee', v)}
               />
             </Field>
           )}

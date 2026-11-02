@@ -146,6 +146,6 @@ describe('default seed', () => {
     expect(accounts.map(a => [a.name, a.type, a.balance])).toEqual([['Τράπεζα', 'bank', 0], ['Μετρητά', 'cash', 0]]);
     expect((await api<Instrument[]>('GET', '/api/instruments')).body).toEqual([]);
     expect((await api<Pie[]>('GET', '/api/pies')).body).toEqual([]);
-    expect((await api<Array<{ id: number }>>('GET', '/api/categories')).body).toHaveLength(15);
+    expect((await api<Array<{ id: number }>>('GET', '/api/categories')).body).toHaveLength(16);
   });
 });

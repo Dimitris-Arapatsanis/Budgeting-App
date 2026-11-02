@@ -11,7 +11,7 @@ const MSFT = 2;
 
 let nextId = 1;
 function trade(partial: Partial<Trade> & Pick<Trade, 'side' | 'quantity' | 'amountEur'>): Trade {
-  return { id: nextId++, date: '2026-10-05', accountId: REVOLUT, instrumentId: VUSA, pieId: null, fundingAccountId: null, fundingTransactionId: null, batchId: null, ...partial };
+  return { id: nextId++, date: '2026-10-05', accountId: REVOLUT, instrumentId: VUSA, pieId: null, fundingAccountId: null, fundingTransactionId: null, fundingFee: 0, batchId: null, ...partial };
 }
 
 describe('computeHoldings', () => {

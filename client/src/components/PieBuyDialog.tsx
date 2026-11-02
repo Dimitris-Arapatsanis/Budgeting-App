@@ -60,6 +60,7 @@ export function PieBuyDialog({ pie, mode, template, onClose }: PieBuyDialogProps
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(today());
   const [funding, setFunding] = useState('');
+  const [fee, setFee] = useState('');
   const [rows, setRows] = useState<Row[] | null>(null);
   // Το ποσό της αγοράς (cents), για να ξαναμοιράζεται όταν αλλάζουν τα ποσοστά
   const [totalEur, setTotalEur] = useState(0);
@@ -71,6 +72,7 @@ export function PieBuyDialog({ pie, mode, template, onClose }: PieBuyDialogProps
     setAmount(template ? centsToInput(template.amount) : '');
     setDate(template?.date ?? today());
     setFunding(template ? (template.fundingAccountId == null ? BROKER_CASH : String(template.fundingAccountId)) : defaultFunding(accounts));
+    setFee('');
     setError(null);
     // Για αρχικές θέσεις δεν χρειάζεται πρόταση: ο χρήστης συμπληρώνει ό,τι έχει
     setRows(mode === 'opening'
@@ -129,6 +131,8 @@ export function PieBuyDialog({ pie, mode, template, onClose }: PieBuyDialogProps
 
   function handleSave() {
     if (!pie || !rows) return;
+    const fundingFee = fee.trim() ? parseAmount(fee) : 0;
+    if (fundingFee == null || fundingFee < 0) return setError('Μη έγκυρη χρέωση, π.χ. 0,18');
     const trades: TradeInput[] = [];
     for (const row of rows) {
       // Όποια γραμμή μείνει κενή (αρχικές θέσεις) ή με 0% (rebalance) απλώς παραλείπεται
@@ -141,6 +145,8 @@ export function PieBuyDialog({ pie, mode, template, onClose }: PieBuyDialogProps
       trades.push({
         date, accountId: pie.accountId, instrumentId: row.instrumentId, side: mode, quantity, amountEur, pieId: pie.id,
         fundingAccountId: mode === 'buy' ? toFundingAccountId(funding) : null,
+        // Μία χρέωση για όλη την αγορά: μπαίνει στην πρώτη μετοχή
+        fundingFee: mode === 'buy' && trades.length === 0 ? fundingFee : 0,
         recurringId: template?.recurringId ?? null,
         recurringDue: template?.recurringDue ?? null,
       });
@@ -188,6 +194,8 @@ export function PieBuyDialog({ pie, mode, template, onClose }: PieBuyDialogProps
                 value={funding}
                 onChange={setFunding}
                 amount={parseAmount(amount)}
+                fee={fee}
+                onFeeChange={setFee}
               />
             </Field>
             {error && <p className="text-sm text-negative">{error}</p>}

@@ -1,6 +1,7 @@
 import { ChartLine } from 'lucide-react';
 import { formatEur, isDebtAccount, type AccountWithBalance } from '@budget/shared';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { AmountInput } from '@/components/AmountInput';
 import { ACCOUNT_ICON } from '@/lib/account-style';
 
 /** Τιμή του select για «από τα μετρητά που έχει ήδη ο broker» (χωρίς μεταφορά). */
@@ -29,6 +30,8 @@ export function FundingSelect({
   value,
   onChange,
   amount,
+  fee,
+  onFeeChange,
 }: {
   accounts: AccountWithBalance[];
   broker?: AccountWithBalance;
@@ -36,6 +39,9 @@ export function FundingSelect({
   onChange: (value: string) => void;
   /** cents: για προειδοποίηση αν το υπόλοιπο του broker δεν φτάνει */
   amount?: number | null;
+  /** Χρέωση της μεταφοράς (π.χ. κατάθεση με κάρτα), φαίνεται μόνο όταν τα λεφτά έρχονται από άλλον λογαριασμό */
+  fee?: string;
+  onFeeChange?: (value: string) => void;
 }) {
   const short = value === BROKER_CASH && broker && amount != null && amount > broker.balance;
   return (
@@ -59,6 +65,16 @@ export function FundingSelect({
           )}
         </SelectContent>
       </Select>
+      {onFeeChange && value !== BROKER_CASH && (
+        <div className="flex items-center gap-2">
+          <label htmlFor="funding-fee" className="flex-1 text-xs text-muted-foreground">
+            Χρέωση κατάθεσης (fee), αν υπάρχει. Φεύγει επιπλέον από τον λογαριασμό και μετράει ως έξοδο «Χρεώσεις».
+          </label>
+          <div className="w-28 shrink-0">
+            <AmountInput id="funding-fee" className="h-8" value={fee ?? ''} onChange={e => onFeeChange(e.target.value)} />
+          </div>
+        </div>
+      )}
       {short && (
         <p className="text-xs text-warning">
           Το {broker.name} έχει {formatEur(broker.balance)}. Αν έστειλες λεφτά από τράπεζα, διάλεξε την τράπεζα.

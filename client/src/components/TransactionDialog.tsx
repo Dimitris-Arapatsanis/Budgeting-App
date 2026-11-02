@@ -36,6 +36,8 @@ interface FormState {
   toAccountId: string;
   categoryId: string;
   description: string;
+  /** Χρέωση (fee), μόνο για έξοδα και μεταφορές */
+  fee: string;
 }
 
 /** Νέα συναλλαγή συμπληρωμένη από κανόνα επανάληψης (✓ στα «Αναμένονται»). */
@@ -60,7 +62,10 @@ function initialState(
 ): FormState {
   const active = accounts.filter(a => !a.archived && !isDebtAccount(a));
   const mainAccount = active.find(a => a.type === 'bank') ?? active[0];
-  const savingsAccount = active.find(a => a.type === 'savings' && a.id !== mainAccount?.id);
+  // Προτεινόμενο «Προς»: η αποταμίευση, αλλιώς άλλη τράπεζα, αλλιώς οποιοσδήποτε άλλος λογαριασμός
+  const savingsAccount = active.find(a => a.type === 'savings' && a.id !== mainAccount?.id)
+    ?? active.find(a => a.type === 'bank' && a.id !== mainAccount?.id)
+    ?? active.find(a => a.id !== mainAccount?.id);
   const firstCategory = (kind: 'income' | 'expense') => String(categories.find(c => c.kind === kind)?.id ?? '');
 
   if (template) {
@@ -72,6 +77,7 @@ function initialState(
       toAccountId: String(template.toAccountId ?? savingsAccount?.id ?? ''),
       categoryId: String(template.categoryId ?? firstCategory(template.type === 'income' ? 'income' : 'expense')),
       description: template.description,
+      fee: '',
     };
   }
   if (transaction && transaction.type !== 'adjustment') {
@@ -83,6 +89,7 @@ function initialState(
       toAccountId: String(transaction.toAccountId ?? ''),
       categoryId: String(transaction.categoryId ?? firstCategory(transaction.type === 'income' ? 'income' : 'expense')),
       description: transaction.description,
+      fee: transaction.fee ? centsToInput(transaction.fee) : '',
     };
   }
   return {
@@ -93,6 +100,7 @@ function initialState(
     toAccountId: String(savingsAccount?.id ?? ''),
     categoryId: firstCategory('expense'),
     description: '',
+    fee: '',
   };
 }
 
@@ -149,6 +157,11 @@ export function TransactionDialog({ open, onOpenChange, transaction, template, d
       setError('Γράψε ένα θετικό ποσό, π.χ. 25 ή 1.234,56');
       return;
     }
+    const fee = form.type === 'income' || !form.fee.trim() ? 0 : parseAmount(form.fee);
+    if (fee == null || fee < 0) {
+      setError('Μη έγκυρη χρέωση, π.χ. 0,18');
+      return;
+    }
     // Η σύνδεση με τον κανόνα επανάληψης μένει και στην επεξεργασία
     const link = {
       recurringId: transaction?.recurringId ?? template?.recurringId ?? null,
@@ -157,8 +170,10 @@ export function TransactionDialog({ open, onOpenChange, transaction, template, d
     const common = { date: form.date, amount, accountId: Number(form.accountId), description: form.description, ...link };
     const build = (recurringId: number | null, recurringDue: string | null): TransactionInput =>
       form.type === 'transfer'
-        ? { ...common, recurringId, recurringDue, type: 'transfer', toAccountId: Number(form.toAccountId) }
-        : { ...common, recurringId, recurringDue, type: form.type, categoryId: Number(form.categoryId) };
+        ? { ...common, recurringId, recurringDue, type: 'transfer', toAccountId: Number(form.toAccountId), fee }
+        : form.type === 'expense'
+          ? { ...common, recurringId, recurringDue, type: 'expense', categoryId: Number(form.categoryId), fee }
+          : { ...common, recurringId, recurringDue, type: 'income', categoryId: Number(form.categoryId) };
     const close = { onSuccess: () => onOpenChange(false) };
 
     if (canRepeat && repeat !== 'none') {
@@ -247,14 +262,26 @@ export function TransactionDialog({ open, onOpenChange, transaction, template, d
             </div>
           )}
 
-          <Field label="Περιγραφή" htmlFor="tx-description">
-            <Input
-              id="tx-description"
-              placeholder="προαιρετικό"
-              value={form.description}
-              onChange={e => set('description', e.target.value)}
-            />
-          </Field>
+          <div className={cn('grid gap-3', form.type !== 'income' && 'grid-cols-[1fr_8rem]')}>
+            <Field label="Περιγραφή" htmlFor="tx-description">
+              <Input
+                id="tx-description"
+                placeholder="προαιρετικό"
+                value={form.description}
+                onChange={e => set('description', e.target.value)}
+              />
+            </Field>
+            {form.type !== 'income' && (
+              <Field label="Χρέωση (fee)" htmlFor="tx-fee">
+                <AmountInput id="tx-fee" placeholder="0,00" value={form.fee} onChange={e => set('fee', e.target.value)} />
+              </Field>
+            )}
+          </div>
+          {form.type !== 'income' && (parseAmount(form.fee) ?? 0) > 0 && (
+            <p className="-mt-2 text-xs text-muted-foreground">
+              Η χρέωση φεύγει επιπλέον από {form.type === 'transfer' ? 'τον λογαριασμό «Από»' : 'τον ίδιο λογαριασμό'} και μετράει ως έξοδο στις «Χρεώσεις».
+            </p>
+          )}
 
           {canRepeat && (
             <Field label="Επανάληψη">

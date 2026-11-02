@@ -46,6 +46,7 @@ export const DEFAULT_CATEGORIES: Record<CategoryKind, CategorySeed[]> = {
     ['Ρούχα', 'shirt', 'pink'],
     ['Συνδρομές', 'repeat', 'teal'],
     ['Ταξίδια', 'plane', 'brown'],
+    ['Χρεώσεις', 'landmark', 'red'],
     ['Άλλα', 'tag', 'slate'],
   ],
 };

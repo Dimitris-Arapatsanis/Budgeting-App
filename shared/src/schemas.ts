@@ -102,6 +102,9 @@ const recurringLink = {
   recurringDue: z.string().regex(ISO_DATE_RE).nullable().default(null),
 };
 
+/** Χρέωση (fee) σε cents: γράφεται ως ξεχωριστό έξοδο «Χρεώσεις» από τον ίδιο λογαριασμό, πάνω από το ποσό */
+const fee = z.number().int().nonnegative().default(0);
+
 const common = {
   date: z.string().regex(ISO_DATE_RE, 'Μη έγκυρη ημερομηνία'),
   accountId: id,
@@ -112,8 +115,8 @@ const common = {
 export const transactionInputSchema = z
   .discriminatedUnion('type', [
     z.object({ ...common, type: z.literal('income'), amount: positiveAmount, categoryId: id }),
-    z.object({ ...common, type: z.literal('expense'), amount: positiveAmount, categoryId: id }),
-    z.object({ ...common, type: z.literal('transfer'), amount: positiveAmount, toAccountId: id }),
+    z.object({ ...common, type: z.literal('expense'), amount: positiveAmount, categoryId: id, fee }),
+    z.object({ ...common, type: z.literal('transfer'), amount: positiveAmount, toAccountId: id, fee }),
     // Διόρθωση υπολοίπου: προσημασμένο ποσό
     z.object({ ...common, type: z.literal('adjustment'), amount: z.number().int().refine(v => v !== 0) }),
   ])
@@ -140,6 +143,10 @@ export interface Transaction {
   /** Ο κανόνας επανάληψης και η λήξη του που καλύπτει αυτή η συναλλαγή */
   recurringId?: number | null;
   recurringDue?: string | null;
+  /** Η χρέωση αυτής της συναλλαγής (μόνο σε μεταφορές/έξοδα που έχουν) */
+  fee?: number;
+  /** Αυτή η συναλλαγή είναι η χρέωση της συναλλαγής `feeForId` */
+  feeForId?: number | null;
 }
 
 // ---------- Επενδύσεις ----------
@@ -190,6 +197,8 @@ export const tradeInputSchema = z.object({
    * μεταφορά προς τον broker. null = από τα μετρητά που έχει ήδη ο broker.
    */
   fundingAccountId: id.nullable().default(null),
+  /** Χρέωση της μεταφοράς «Χρήματα από» (cents), π.χ. κατάθεση με κάρτα στο Trading 212 */
+  fundingFee: fee,
   ...recurringLink,
 });
 export type TradeInput = z.input<typeof tradeInputSchema>;
@@ -210,6 +219,8 @@ export interface Trade {
   fundingAccountId: number | null;
   /** Η μεταφορά «Χρήματα από». Κοινή για όλες τις μετοχές μιας αγοράς στο pie, άρα ξεχωρίζει τις αγορές μεταξύ τους */
   fundingTransactionId: number | null;
+  /** Χρέωση της μεταφοράς «Χρήματα από» για αυτή την κίνηση */
+  fundingFee: number;
   /** Ίδιο για όλες τις κινήσεις που αποθηκεύτηκαν μαζί (μια αγορά στο pie) */
   batchId: number | null;
   recurringId?: number | null;

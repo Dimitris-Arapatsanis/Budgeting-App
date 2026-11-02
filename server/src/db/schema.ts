@@ -88,6 +88,8 @@ export const transactions = sqliteTable(
     /** Κανόνας επανάληψης και λήξη του που καλύπτει αυτή η καταχώριση */
     recurringId: integer('recurring_id').references(() => recurring.id),
     recurringDue: text('recurring_due'),
+    /** Χρέωση (fee): έξοδο που ανήκει σε αυτή τη συναλλαγή (μεταφορά ή έξοδο) και αλλάζει/σβήνεται μαζί της */
+    feeForId: integer('fee_for_id'),
     createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   t => [index('transactions_date_idx').on(t.date)],
@@ -131,6 +133,8 @@ export const trades = sqliteTable(
     fundingTransactionId: integer('funding_transaction_id').references(() => transactions.id),
     /** Κινήσεις που αποθηκεύτηκαν μαζί (μια αγορά στο pie) έχουν το ίδιο batchId: το id της πρώτης */
     batchId: integer('batch_id'),
+    /** Χρέωση της μεταφοράς «Χρήματα από» για αυτή την αγορά (cents). Γίνεται έξοδο «Χρεώσεις» */
+    fundingFee: integer('funding_fee').notNull().default(0),
     recurringId: integer('recurring_id').references(() => recurring.id),
     recurringDue: text('recurring_due'),
     createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),

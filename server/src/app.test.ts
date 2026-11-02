@@ -40,7 +40,7 @@ describe('seed', () => {
     ]);
     const categories = (await api<Category[]>('GET', '/api/categories')).body;
     expect(categories.filter(c => c.kind === 'income')).toHaveLength(4);
-    expect(categories.filter(c => c.kind === 'expense')).toHaveLength(11);
+    expect(categories.filter(c => c.kind === 'expense')).toHaveLength(12);
     expect(categories.find(c => c.name === 'Σούπερ μάρκετ')).toMatchObject({ icon: 'shopping-cart', color: 'emerald' });
   });
 });

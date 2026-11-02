@@ -30,6 +30,7 @@ import {
 import type { Db } from '../db/index.ts';
 import { accounts, instruments, pieSlices, pies, recurring, trades, transactions } from '../db/schema.ts';
 import { HttpError, notFound } from '../http-error.ts';
+import { deleteFee, syncFundingFee } from '../fees.ts';
 import type { MarketData } from '../market/market-data.ts';
 import type { Prices } from '../market/prices.ts';
 import { openingsValue, valueAt } from '../market/valuation.ts';
@@ -46,6 +47,7 @@ const TRADE_COLUMNS = {
   pieId: trades.pieId,
   fundingAccountId: transactions.accountId,
   fundingTransactionId: trades.fundingTransactionId,
+  fundingFee: trades.fundingFee,
   batchId: trades.batchId,
   recurringId: trades.recurringId,
   recurringDue: trades.recurringDue,
@@ -90,6 +92,7 @@ function fundTrades(tx: Tx, items: Array<{ id: number; input: ParsedTradeInput }
       description: group.length > 1 ? 'Αγορά μετοχών' : `Αγορά ${instrument?.name ?? 'μετοχής'}`,
     }).returning().get();
     tx.update(trades).set({ fundingTransactionId: transfer.id }).where(inArray(trades.id, group.map(g => g.id))).run();
+    syncFundingFee(tx, transfer.id);
   }
 }
 
@@ -100,7 +103,9 @@ function releaseFunding(tx: Tx, fundingTransactionId: number | null, amountEur: 
   if (!transfer) return;
   if (transfer.amount > amountEur) {
     tx.update(transactions).set({ amount: transfer.amount - amountEur }).where(eq(transactions.id, transfer.id)).run();
+    syncFundingFee(tx, transfer.id);
   } else {
+    deleteFee(tx, transfer.id);
     tx.delete(transactions).where(eq(transactions.id, transfer.id)).run();
   }
 }
@@ -160,7 +165,7 @@ function toTradeRow(db: Db, input: ParsedTradeInput): ParsedTradeInput {
     const account = db.select().from(accounts).where(eq(accounts.id, funding)).get();
     if (!account || isDebtAccount(account)) throw new HttpError(400, 'Ο λογαριασμός «Χρήματα από» δεν υπάρχει');
   }
-  return { ...input, fundingAccountId: funding, ...recurringLink(db, input) };
+  return { ...input, fundingAccountId: funding, fundingFee: funding == null ? 0 : input.fundingFee, ...recurringLink(db, input) };
 }
 
 export function investmentRoutes(app: FastifyInstance, db: Db, market: MarketData, prices: Prices) {

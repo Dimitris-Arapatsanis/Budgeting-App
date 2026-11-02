@@ -64,6 +64,13 @@
       "when": 1793444703982,
       "tag": "0008_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1793630723167,
+      "tag": "0009_fees",
+      "breakpoints": true
     }
   ]
 }

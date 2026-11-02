@@ -16,6 +16,7 @@ import { accounts, categories, trades, transactions } from '../db/schema.ts';
 import { HttpError, notFound } from '../http-error.ts';
 import { recurringLink } from './recurring.ts';
 import { listTrades } from './investments.ts';
+import { deleteFee, setFee } from '../fees.ts';
 
 /** Οι μεταφορές που φτιάχτηκαν αυτόματα για αγορές μετοχών («Χρήματα από»). */
 function fundingTransactionIds(db: Db) {
@@ -25,7 +26,7 @@ function fundingTransactionIds(db: Db) {
 /** Συναλλαγές μιας περιόδου: `period` = "YYYY-MM" (μήνας) ή "YYYY" (έτος). */
 function periodTransactions(db: Db, period: string): Transaction[] {
   const funding = fundingTransactionIds(db);
-  return db.select({
+  const rows = db.select({
     id: transactions.id,
     date: transactions.date,
     type: transactions.type,
@@ -37,12 +38,19 @@ function periodTransactions(db: Db, period: string): Transaction[] {
     debtId: transactions.debtId,
     recurringId: transactions.recurringId,
     recurringDue: transactions.recurringDue,
+    feeForId: transactions.feeForId,
   })
     .from(transactions)
     .where(like(transactions.date, `${period}-%`))
     .orderBy(desc(transactions.date), desc(transactions.id))
-    .all()
-    .map(t => (funding.has(t.id) ? { ...t, tradeFunding: true } : t));
+    .all();
+  // Η χρέωση έχει την ίδια ημερομηνία με τη συναλλαγή της, άρα είναι στην ίδια περίοδο
+  const fees = new Map(rows.filter(t => t.feeForId != null).map(t => [t.feeForId!, t.amount]));
+  return rows.map(t => ({
+    ...t,
+    ...(funding.has(t.id) && { tradeFunding: true }),
+    ...(fees.has(t.id) && { fee: fees.get(t.id) }),
+  }));
 }
 
 /** Μετατρέπει το validated input σε γραμμή πίνακα, ελέγχοντας ότι λογαριασμοί/κατηγορία υπάρχουν. */
@@ -77,10 +85,14 @@ function toRow(db: Db, input: ParsedTransactionInput) {
   return row;
 }
 
+/** Χρέωση μόνο σε έξοδα και μεταφορές. */
+const feeOf = (input: ParsedTransactionInput) => (input.type === 'expense' || input.type === 'transfer' ? input.fee : 0);
+
 /** Οι συναλλαγές των χρωστούμενων και οι μεταφορές των αγορών μετοχών αλλάζουν μόνο από εκεί που φτιάχτηκαν. */
 function checkNotDebt(db: Db, id: number) {
-  const row = db.select({ debtId: transactions.debtId }).from(transactions).where(eq(transactions.id, id)).get();
+  const row = db.select({ debtId: transactions.debtId, feeForId: transactions.feeForId }).from(transactions).where(eq(transactions.id, id)).get();
   if (!row) throw notFound('Η συναλλαγή');
+  if (row.feeForId != null) throw new HttpError(409, 'Η χρέωση αλλάζει μαζί με τη συναλλαγή της.');
   if (row.debtId != null) throw new HttpError(409, 'Η συναλλαγή ανήκει σε χρωστούμενο. Άλλαξέ την από τους Λογαριασμούς.');
   if (fundingTransactionIds(db).has(id)) {
     throw new HttpError(409, 'Η μεταφορά ανήκει σε αγορά μετοχών. Άλλαξέ την από τις Επενδύσεις.');
@@ -94,24 +106,36 @@ export function transactionRoutes(app: FastifyInstance, db: Db) {
   });
 
   app.post('/api/transactions', (req, reply) => {
-    const row = toRow(db, transactionInputSchema.parse(req.body));
+    const input = transactionInputSchema.parse(req.body);
+    const row = toRow(db, input);
     reply.code(201);
-    return db.insert(transactions).values(row).returning().get();
+    return db.transaction(tx => {
+      const created = tx.insert(transactions).values(row).returning().get();
+      setFee(tx, created, feeOf(input));
+      return created;
+    });
   });
 
   app.put('/api/transactions/:id', req => {
     const { id } = idParamSchema.parse(req.params);
     checkNotDebt(db, id);
-    const row = toRow(db, transactionInputSchema.parse(req.body));
-    const updated = db.update(transactions).set(row).where(eq(transactions.id, id)).returning().get();
-    if (!updated) throw notFound('Η συναλλαγή');
-    return updated;
+    const input = transactionInputSchema.parse(req.body);
+    const row = toRow(db, input);
+    return db.transaction(tx => {
+      const updated = tx.update(transactions).set(row).where(eq(transactions.id, id)).returning().get();
+      if (!updated) throw notFound('Η συναλλαγή');
+      setFee(tx, updated, feeOf(input));
+      return updated;
+    });
   });
 
   app.delete('/api/transactions/:id', (req, reply) => {
     const { id } = idParamSchema.parse(req.params);
     checkNotDebt(db, id);
-    const row = db.delete(transactions).where(eq(transactions.id, id)).returning().get();
+    const row = db.transaction(tx => {
+      deleteFee(tx, id);
+      return tx.delete(transactions).where(eq(transactions.id, id)).returning().get();
+    });
     if (!row) throw notFound('Η συναλλαγή');
     return reply.code(204).send();
   });

@@ -238,7 +238,12 @@ function TransactionList({
   const accountName = (id: number | null) => accounts.find(a => a.id === id)?.name ?? '—';
   const debtInfo = (t: Transaction) => debtTransfer(t, accounts);
   // Χρωστούμενα και μεταφορές για αγορές μετοχών: αλλάζουν μόνο από εκεί που φτιάχτηκαν
-  const locked = (t: Transaction) => t.debtId != null || !!t.tradeFunding;
+  const locked = (t: Transaction) => t.debtId != null || !!t.tradeFunding || t.feeForId != null;
+  // Μια χρέωση ανοίγει τη συναλλαγή της (εκεί αλλάζει)
+  const editTarget = (t: Transaction) => {
+    const target = t.feeForId != null ? transactions.find(p => p.id === t.feeForId) : t;
+    return target && target.type !== 'adjustment' && !locked(target) ? target : undefined;
+  };
 
   const byDay = useMemo(() => {
     const groups = new Map<string, Transaction[]>();
@@ -256,11 +261,11 @@ function TransactionList({
               <li key={t.id} className="group flex items-center transition-colors hover:bg-muted/60">
                 <button
                   type="button"
-                  onClick={() => t.type !== 'adjustment' && !locked(t) && onSelect(t)}
-                  title={t.debtId != null ? 'Αλλάζει από τα Χρωστούμενα, στους Λογαριασμούς' : t.tradeFunding ? 'Αλλάζει από την αγορά, στις Επενδύσεις' : undefined}
+                  onClick={() => { const target = editTarget(t); if (target) onSelect(target); }}
+                  title={t.debtId != null ? 'Αλλάζει από τα Χρωστούμενα, στους Λογαριασμούς' : t.tradeFunding ? 'Αλλάζει από την αγορά, στις Επενδύσεις' : t.feeForId != null ? 'Χρέωση: αλλάζει μαζί με τη συναλλαγή της' : undefined}
                   className={cn(
                     'flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 text-left outline-none',
-                    (t.type === 'adjustment' || locked(t)) && 'cursor-default',
+                    !editTarget(t) && 'cursor-default',
                     locked(t) && 'pr-4',
                   )}
                 >
